@@ -1,0 +1,85 @@
+[tool.poetry]
+name = "fastbidder"
+version = "3.0.0"
+description = "Automated HVAC quotation matching system using hybrid AI approach"
+authors = ["Your Name <email@example.com>"]
+license = "MIT"
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.10"
+# Web Framework
+fastapi = "^0.104.0"
+uvicorn = {extras = ["standard"], version = "^0.24.0"}
+python-multipart = "^0.0.6"  # For file uploads
+
+# Task Queue
+celery = {extras = ["redis"], version = "^5.3.0"}
+redis = "^5.0.0"
+flower = "^2.0.0"  # Celery monitoring
+
+# Data Processing
+polars = "^0.19.0"  # Fast DataFrame operations
+openpyxl = "^3.1.0"  # Excel file handling
+xlsxwriter = "^3.1.0"  # Excel writing
+
+# AI/ML
+# sentence-transformers = "^2.2.0"
+# chromadb = "^0.4.0"
+
+# Database
+sqlalchemy = "^2.0.0"
+alembic = "^1.12.0"
+
+# Utilities
+pydantic = "^2.4.0"  # Data validation
+pydantic-settings = "^2.0.0"  # Settings management
+python-dotenv = "^1.0.0"  # Environment variables
+httpx = "^0.25.0"  # Async HTTP client
+
+# Monitoring & Logging
+structlog = "^23.2.0"  # Structured logging
+prometheus-client = "^0.18.0"  # Metrics
+
+[tool.poetry.group.dev.dependencies]
+# Testing
+pytest = "^7.4.0"
+pytest-asyncio = "^0.21.0"
+pytest-cov = "^4.1.0"
+pytest-mock = "^3.12.0"
+factory-boy = "^3.3.0"  # Test data factories
+
+# Code Quality
+black = "^23.11.0"  # Code formatter
+isort = "^5.12.0"  # Import sorting
+flake8 = "^6.1.0"  # Linting
+mypy = "^1.7.0"  # Type checking
+pre-commit = "^3.5.0"  # Git hooks
+
+# Development tools
+ipython = "^8.17.0"  # Better Python shell
+rich = "^13.7.0"  # Beautiful terminal output
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+addopts = "-v --cov=src --cov-report=term-missing"

@@ -1,0 +1,51 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: fastbidder_redis
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - fastbidder_network
+
+  celery_worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: fastbidder_celery_worker
+    command: celery -A src.application.tasks worker --loglevel=info --pool=solo
+    volumes:
+      - ./src:/app/src
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - fastbidder_network
+    restart: unless-stopped
+
+  flower:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: fastbidder_flower
+    command: celery -A src.application.tasks flower --port=5555
+    ports:
+      - "5555:5555"
+    env_file:
+      - .env
+    depends_on:
+      - celery_worker
+    networks:
+      - fastbidder_network
+    restart: unless-stopped
+
+networks:
+  fastbidder_network:
+    driver: bridge
