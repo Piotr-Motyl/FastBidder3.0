@@ -1,19 +1,18 @@
 """
-Celery tasks package.
+Celery Tasks
 
-This package contains all Celery task definitions and the main
-celery_app instance used for async processing.
+Responsibility:
+    Asynchronous task definitions for long-running operations.
+    Progress tracking and result storage in Redis.
 
-For Task 0.1.2, only the basic celery_app and health_check task
-are included to test Redis-Celery connectivity.
+Contains:
+    - celery_app.py - Celery configuration
+    - Async task definitions (matching, embedding, file processing)
+    - Progress tracking utilities
 
-Usage:
-    Start worker:
-        celery -A src.application.tasks worker --loglevel=info
-
-    Run task:
-        from src.application.tasks import health_check
-        result = health_check.delay()
+Does NOT contain:
+    - Business logic (delegates to Domain services)
+    - Synchronous operations (use Application services instead)
 """
 
 from .celery_app import celery_app, health_check

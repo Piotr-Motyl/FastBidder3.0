@@ -1,63 +1,71 @@
-# ===================================
-# FastBidder Development Commands
-# ===================================
+# FastBidder - Makefile
+# Development and Docker commands
 
-.PHONY: help docker-up docker-down docker-logs docker-restart docker-test docker-health
+.PHONY: help install run test lint format docker-up docker-down docker-logs docker-restart docker-test docker-health celery-worker celery-flower
 
+# Display help
 help:
-	@echo "╔════════════════════════════════════════╗"
-	@echo "║   FastBidder Development Commands      ║"
-	@echo "╚════════════════════════════════════════╝"
+	@echo "FastBidder - Available commands:"
+	@echo ""
+	@echo "Local Development:"
+	@echo "  make install        - Install dependencies with Poetry"
+	@echo "  make run            - Run FastAPI app locally (with reload)"
+	@echo "  make test           - Run tests locally with pytest"
+	@echo "  make lint           - Run linters (flake8, mypy)"
+	@echo "  make format         - Format code (black, isort)"
+	@echo "  make celery-worker  - Run Celery worker locally"
+	@echo "  make celery-flower  - Run Flower monitoring locally"
 	@echo ""
 	@echo "Docker Commands:"
-	@echo "  make docker-up      - Start all services (Redis, Celery, Flower)"
-	@echo "  make docker-down    - Stop all services"
-	@echo "  make docker-logs    - Show logs from all services"
-	@echo "  make docker-restart - Restart all services"
-	@echo "  make docker-test    - Test Celery health check task"
-	@echo "  make docker-health  - Check service health status"
-	@echo ""
+	@echo "  make docker-up      - Start all Docker services"
+	@echo "  make docker-down    - Stop all Docker services"
+	@echo "  make docker-logs    - Show Docker logs"
+	@echo "  make docker-restart - Restart Docker services"
+	@echo "  make docker-test    - Run tests in Docker"
+	@echo "  make docker-health  - Check services health"
 
-# Start all Docker services
+# Local Development Commands
+install:
+	poetry install
+
+run:
+	poetry run uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
+
+test:
+	poetry run pytest -v --cov=src --cov-report=term-missing
+
+lint:
+	poetry run flake8 src tests
+	poetry run mypy src
+
+format:
+	poetry run black src tests
+	poetry run isort src tests
+
+celery-worker:
+	poetry run celery -A src.application.tasks.celery_app worker --loglevel=info
+
+celery-flower:
+	poetry run celery -A src.application.tasks.celery_app flower --port=5555
+
+# Docker Commands
 docker-up:
-	@echo "🚀 Starting FastBidder services..."
 	docker compose up -d
-	@echo "✅ Services started!"
-	@echo "📊 Flower UI: http://localhost:5555"
-	@echo "🔴 Redis: localhost:6379"
 
-# Stop all Docker services
 docker-down:
-	@echo "🛑 Stopping FastBidder services..."
 	docker compose down
-	@echo "✅ Services stopped!"
 
-# Show logs from all services
 docker-logs:
 	docker compose logs -f
 
-# Restart all services
 docker-restart:
-	@echo "🔄 Restarting services..."
 	docker compose restart
-	@echo "✅ Services restarted!"
 
-# Test Celery health check task
 docker-test:
-	@echo "🧪 Testing Celery health check..."
-	@echo ""
-	@docker compose exec -T celery_worker python -c "from src.application.tasks.celery_app import health_check; result = health_check.delay(); import time; time.sleep(1); print(result.get(timeout=5))"
-	@echo ""
-	@echo "✅ If you see task result above, Celery is working correctly!"
+	docker compose exec celery_worker celery -A src.application.tasks.celery_app inspect ping
 
-# Check health status of services
 docker-health:
-	@echo "🏥 Checking service health..."
-	@echo ""
-	@echo "Redis:"
-	@docker compose exec -T redis redis-cli ping || echo "❌ Redis not responding"
-	@echo ""
-	@echo "Celery Worker:"
-	@docker compose exec -T celery_worker celery -A src.application.tasks inspect ping || echo "❌ Celery not responding"
-	@echo ""
-	@echo "✅ Health check complete!"
+	@echo "Redis health:"
+	@docker compose exec redis redis-cli ping || echo "Redis not responding"
+	@echo "\nCelery worker health:"
+	@docker compose exec celery_worker celery -A src.application.tasks.celery_app inspect active || echo "Celery not responding"
