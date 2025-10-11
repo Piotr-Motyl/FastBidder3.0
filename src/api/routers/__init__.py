@@ -1,17 +1,24 @@
 """
-API Routers
+API Routers Package
 
-Responsibility:
-    FastAPI endpoint definitions grouped by functionality.
+Contains all FastAPI routers grouped by functionality.
+Implements REST API endpoints for the FastBidder application.
 
-Contains:
-    To be implemented in Phase 3:
-    - upload.py - File upload endpoints
-    - matching.py - Matching process endpoints
-    - jobs.py - Celery job status endpoints
-    - results.py - Results retrieval endpoints
+Architecture Notes:
+    - Part of API Layer (Presentation)
+    - Each router handles a specific domain or concern
+    - Routers are thin wrappers around Application Layer use cases
+    - All routers follow dependency injection pattern
 
-Does NOT contain:
-    - Business logic
-    - Direct database access
+Available Routers:
+    - matching_router: HVAC matching process endpoints
+    - jobs_router: Job status tracking endpoints (cross-cutting concern)
+
+Phase 1 Note:
+    Currently only contracts (Task 1.1.1). Implementation in Phase 3.
 """
+
+from .matching import router as matching_router
+from .jobs import router as jobs_router
+
+__all__ = ["matching_router", "jobs_router"]
