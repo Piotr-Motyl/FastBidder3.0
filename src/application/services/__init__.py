@@ -1,17 +1,35 @@
 """
-Application Services
+Application Layer Package
 
 Responsibility:
-    Orchestration services that coordinate multiple domain services
-    and infrastructure components.
+    Coordinates use cases, manages asynchronous task processing with Celery,
+    and implements CQRS pattern.
+
+Architecture Notes:
+    - Orchestration layer between API and Domain
+    - Contains Commands (write), Queries (read), and Use Cases
+    - Celery tasks for long-running operations
+    - Shared models (enums, DTOs)
 
 Contains:
-    To be implemented in Phase 3:
-    - Orchestrator services for complex workflows
-    - Progress tracking services
-    - Result aggregation services
+    - commands/: CQRS write operations
+    - queries/: CQRS read operations
+    - services/: Use Cases (orchestration)
+    - tasks/: Celery async tasks
+    - models: Shared Application Layer models
 
 Does NOT contain:
-    - Domain business logic (use Domain services)
-    - Direct infrastructure calls (use dependency injection)
+    - Domain business rules (in Domain Layer)
+    - HTTP handling (in API Layer)
+    - Infrastructure details (in Infrastructure Layer)
+
+Phase 1 Note:
+    Currently contains contracts only. Implementation in Phase 3.
 """
+
+# Re-export commonly used models for convenience
+from src.application.models import JobStatus
+
+__all__ = [
+    "JobStatus",
+]

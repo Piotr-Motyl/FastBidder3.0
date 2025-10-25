@@ -7,7 +7,7 @@ Responsibility:
 
 Architecture Notes:
     - Part of API Layer (Presentation)
-    - Depends on Application Layer (ProcessMatchingUseCase - to be implemented in Task 1.1.2)
+    - Depends on Application Layer (ProcessMatchingUseCase - Task 1.1.2)
     - Returns 202 Accepted for async operations (REST best practice)
     - No business logic - pure HTTP concerns
     - Uses dependency injection pattern (NOT direct Celery calls!)
@@ -25,41 +25,19 @@ Does NOT contain:
 Phase 1 Note:
     This is a CONTRACT ONLY. Implementation will be added in Phase 3.
     All endpoints raise NotImplementedError.
+
+FIX:
+    JobStatus now imported from Application Layer (correct dependency direction).
 """
 
 from typing import Optional, Dict, Any
 from uuid import UUID
-from enum import Enum
 
 from fastapi import APIRouter, status, HTTPException, Depends
 from pydantic import BaseModel, Field
 
-
-# ============================================================================
-# ENUMS
-# ============================================================================
-
-
-class JobStatus(str, Enum):
-    """
-    Status of asynchronous matching job.
-
-    Represents the lifecycle of a Celery task from queue to completion.
-    Used across multiple routers (matching.py, jobs.py).
-
-    Attributes:
-        QUEUED: Job accepted and waiting in Celery queue
-        PROCESSING: Job currently being executed by Celery worker
-        COMPLETED: Job finished successfully with results available
-        FAILED: Job failed with error details available
-        CANCELLED: Job cancelled by user or system
-    """
-
-    QUEUED = "queued"
-    PROCESSING = "processing"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+# Import JobStatus from Application Layer (correct dependency direction)
+from src.application.models import JobStatus
 
 
 # ============================================================================
@@ -72,33 +50,20 @@ class ProcessMatchingRequest(BaseModel):
     Request model for triggering matching process.
 
     Attributes:
-        wf_file_id: UUID of uploaded working file (Excel with descriptions to match)
-        ref_file_id: UUID of uploaded reference file (Excel with products and prices)
-        threshold: Similarity threshold percentage (0.0-100.0).
-                   Only matches above this threshold will be included in results.
-                   Default: 75.0 (from .env DEFAULT_THRESHOLD)
-
-    Example:
-        {
-            "wf_file_id": "a3bb189e-8bf9-3888-9912-ace4e6543002",
-            "ref_file_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-            "threshold": 80.0
-        }
+        wf_file_id: UUID of uploaded working file
+        ref_file_id: UUID of uploaded reference file
+        threshold: Similarity threshold percentage (0.0-100.0)
 
     Validation:
         - wf_file_id and ref_file_id must be valid UUIDs
-        - wf_file_id != ref_file_id (cannot match file against itself)
+        - wf_file_id != ref_file_id (validated in Command layer)
         - threshold must be between 0.0 and 100.0 (inclusive)
-
-    Business Rules (validated by Application Layer):
-        - Both files must exist in storage
-        - Files must have valid Excel format (.xlsx, .xls)
-        - Working file must contain descriptions column
-        - Reference file must contain descriptions and prices columns
     """
 
     wf_file_id: UUID = Field(description="UUID of working file uploaded to system")
+
     ref_file_id: UUID = Field(description="UUID of reference file uploaded to system")
+
     threshold: float = Field(
         default=75.0,
         ge=0.0,
@@ -121,31 +86,25 @@ class ProcessMatchingResponse(BaseModel):
     Response model for successfully triggered matching process.
 
     Returned with HTTP 202 Accepted to indicate async job has been queued.
-    Client should poll GET /jobs/{job_id}/status to track progress.
 
     Attributes:
-        job_id: Unique identifier for the Celery task (can be used to query status)
+        job_id: Unique identifier for the Celery task
         status: Current job status (always "queued" in immediate response)
-        estimated_time: Estimated time to completion in seconds (rough estimate based on file size)
+        estimated_time: Estimated time to completion in seconds
         message: Human-readable message about job status
-
-    Example:
-        {
-            "job_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-            "status": "queued",
-            "estimated_time": 45,
-            "message": "Matching job queued successfully. Use job_id to check status at GET /jobs/{job_id}/status"
-        }
     """
 
     job_id: UUID = Field(description="Celery task ID for tracking job progress")
+
     status: JobStatus = Field(
         default=JobStatus.QUEUED, description="Current status of the job"
     )
+
     estimated_time: int = Field(
         ge=0,
         description="Estimated time to completion in seconds (based on file size and historical data)",
     )
+
     message: str = Field(
         default="Matching job queued successfully. Use job_id to check status.",
         description="Human-readable status message",
@@ -166,26 +125,16 @@ class ErrorResponse(BaseModel):
     """
     Standard error response model for all API errors.
 
-    Provides consistent error structure across all endpoints.
-
     Attributes:
-        code: Machine-readable error code (e.g., "INVALID_FILE_ID", "FILE_NOT_FOUND")
+        code: Machine-readable error code
         message: Human-readable error message
-        details: Optional additional error details (validation errors, stack trace in dev mode)
-
-    Example:
-        {
-            "code": "FILE_NOT_FOUND",
-            "message": "Working file with ID a3bb189e-8bf9-3888-9912-ace4e6543002 not found",
-            "details": {
-                "file_id": "a3bb189e-8bf9-3888-9912-ace4e6543002",
-                "checked_locations": ["/tmp/fastbidder/uploads"]
-            }
-        }
+        details: Optional additional error details
     """
 
     code: str = Field(description="Machine-readable error code")
+
     message: str = Field(description="Human-readable error message")
+
     details: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Additional error context (validation errors, debug info)",
@@ -225,7 +174,7 @@ router = APIRouter(
 
 
 # ============================================================================
-# DEPENDENCY INJECTION PLACEHOLDERS
+# DEPENDENCY INJECTION
 # ============================================================================
 
 
@@ -237,19 +186,19 @@ async def get_process_matching_use_case():
         ProcessMatchingUseCase: Application Layer use case for triggering matching
 
     Note:
-        Implementation in Phase 2 (Task 1.1.2 - Application Layer contracts).
-        Will inject actual use case from Application Layer.
+        Implementation in Phase 3 (Task 3.4.1).
+        Will inject actual use case with all dependencies:
+        - Celery app
+        - FileStorageService
 
-    Architecture Pattern:
-        This follows Dependency Inversion Principle from Clean Architecture.
-        API Layer depends on abstractions (use case interface), not concrete implementations.
-        The use case will handle:
-        - Creating ProcessMatchingCommand from request
-        - Validating file existence
-        - Triggering Celery task via process_matching_task
-        - Returning job metadata
+    Example implementation (Phase 3):
+        from src.application.services import ProcessMatchingUseCase
+        from src.application.tasks import celery_app
+        from src.infrastructure.file_storage import get_file_storage_service
+
+        file_storage = get_file_storage_service()
+        return ProcessMatchingUseCase(celery_app, file_storage)
     """
-    # Implementation in Phase 3
     raise NotImplementedError(
         "ProcessMatchingUseCase not implemented yet - will be added in Task 1.1.2"
     )
@@ -284,7 +233,7 @@ async def get_process_matching_use_case():
             "model": ErrorResponse,
         },
         422: {
-            "description": "Unprocessable Entity - Validation error (e.g., invalid threshold)",
+            "description": "Unprocessable Entity - Validation error",
             "model": ErrorResponse,
         },
     },
@@ -295,30 +244,13 @@ async def process_matching(
     """
     Trigger asynchronous HVAC matching process.
 
-    This endpoint accepts two file IDs (working file and reference file) and
-    a similarity threshold, then queues an asynchronous Celery task to perform
-    the matching process.
-
-    **Process Flow:**
+    Process Flow:
     1. Validate input parameters (file IDs, threshold)
-    2. Create ProcessMatchingCommand with validated data
-    3. Delegate to Application Layer use case (ProcessMatchingUseCase)
+    2. Create ProcessMatchingCommand from request
+    3. Delegate to Application Layer use case
     4. Use case validates file existence and format
-    5. Use case triggers Celery task via process_matching_task
+    5. Use case triggers Celery task
     6. Return 202 Accepted with job_id for status tracking
-
-    **Business Rules:**
-    - Working file and reference file must be different
-    - Files must exist in storage (validated by Application Layer)
-    - Files must be valid Excel format (.xlsx, .xls)
-    - Threshold must be between 0.0 and 100.0
-    - Only one matching job per file pair at a time (validated by Application Layer)
-
-    **Async Processing:**
-    - Job is queued immediately (returns in < 100ms)
-    - Client must poll GET /jobs/{job_id}/status for progress
-    - Recommended polling interval: 2-5 seconds
-    - Job progress updated every 10% in Redis
 
     Args:
         request: ProcessMatchingRequest with file IDs and threshold
@@ -333,60 +265,38 @@ async def process_matching(
         HTTPException 422: If threshold validation fails
         HTTPException 500: If unexpected error during job creation
 
-    Example:
-        >>> response = await client.post(
-        ...     "/api/matching/process",
-        ...     json={
-        ...         "wf_file_id": "a3bb189e-8bf9-3888-9912-ace4e6543002",
-        ...         "ref_file_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-        ...         "threshold": 80.0
-        ...     }
-        ... )
-        >>> print(response.status_code)
-        202
-        >>> print(response.json())
-        {
-            "job_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-            "status": "queued",
-            "estimated_time": 45,
-            "message": "Matching job queued successfully..."
-        }
-
     Architecture Note:
         This endpoint is a thin wrapper around Application Layer.
         All business logic is delegated to ProcessMatchingUseCase.
         No direct Celery task invocation - follows dependency inversion principle.
-
-    CQRS Pattern:
-        This endpoint implements a COMMAND (write operation).
-        It modifies system state by creating a new matching job.
-        Read operations (job status) are in separate router (jobs.py).
     """
     # CONTRACT ONLY - Implementation in Phase 3
     #
     # Implementation will:
-    # 1. Validate wf_file_id != ref_file_id
-    # 2. Create ProcessMatchingCommand from request
-    # 3. Call use_case.execute(command)
-    # 4. Return ProcessMatchingResponse with job metadata
-    # NotImplementedError`   `
-    # Example implementation:
-    # if request.wf_file_id == request.ref_file_id:
-    #     raise HTTPException(
-    #         status_code=400,
-    #         detail=ErrorResponse(
-    #             code="IDENTICAL_FILES",
-    #             message="Working file and reference file must be different"
-    #         )
-    #     )
+    # 1. Convert request to command
+    # 2. Call use_case.execute(command)
+    # 3. Convert result to response
+    # 4. Return response
     #
-    # command = ProcessMatchingCommand(
-    #     wf_file_id=request.wf_file_id,
-    #     ref_file_id=request.ref_file_id,
-    #     threshold=request.threshold
-    # )
-    # result = await use_case.execute(command)
-    # return result
+    # Example implementation:
+    # from src.application.commands import ProcessMatchingCommand
+    #
+    # try:
+    #     command = ProcessMatchingCommand(
+    #         wf_file_id=request.wf_file_id,
+    #         ref_file_id=request.ref_file_id,
+    #         threshold=request.threshold
+    #     )
+    #     result = await use_case.execute(command)
+    #
+    #     return ProcessMatchingResponse(
+    #         job_id=result.job_id,
+    #         status=result.status,
+    #         estimated_time=result.estimated_time,
+    #         message=result.message
+    #     )
+    # except ValueError as e:
+    #     raise HTTPException(status_code=400, detail=str(e))
 
     raise NotImplementedError(
         "Implementation in Phase 3 - Task 3.4.1. "

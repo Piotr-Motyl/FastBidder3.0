@@ -1,17 +1,35 @@
 """
-Commands - CQRS Write Operations
+Application Layer Package
 
 Responsibility:
-    Encapsulates write operations (create, update, delete) as command objects.
-    Ensures validation before execution.
+    Coordinates use cases, manages asynchronous task processing with Celery,
+    and implements CQRS pattern.
+
+Architecture Notes:
+    - Orchestration layer between API and Domain
+    - Contains Commands (write), Queries (read), and Use Cases
+    - Celery tasks for long-running operations
+    - Shared models (enums, DTOs)
 
 Contains:
-    To be implemented in Phase 2:
-    - ProcessMatchingCommand - Start matching process
-    - UploadFileCommand - Handle file upload
-    - Command validators
+    - commands/: CQRS write operations
+    - queries/: CQRS read operations
+    - services/: Use Cases (orchestration)
+    - tasks/: Celery async tasks
+    - models: Shared Application Layer models
 
 Does NOT contain:
-    - Read operations (use Queries)
-    - Business rules (use Domain services)
+    - Domain business rules (in Domain Layer)
+    - HTTP handling (in API Layer)
+    - Infrastructure details (in Infrastructure Layer)
+
+Phase 1 Note:
+    Currently contains contracts only. Implementation in Phase 3.
 """
+
+# Re-export commonly used models for convenience
+from src.application.models import JobStatus
+
+__all__ = [
+    "JobStatus",
+]
