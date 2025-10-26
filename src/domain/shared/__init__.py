@@ -1,18 +1,20 @@
 """
-Shared Domain
+Shared Domain Module
 
-Responsibility:
-    Domain concepts shared across multiple subdomains.
-    Generic domain utilities and base classes.
+Shared domain concepts used across all subdomains (HVAC, Excel, etc.).
+Contains base classes, common value objects, and domain exceptions.
 
-Contains:
-    To be implemented as needed:
-    - Base entity classes
-    - Common value objects
-    - Domain exceptions
-    - Shared domain utilities
+This module exports:
+    - DomainException: Base exception for all domain errors
 
-Does NOT contain:
-    - Subdomain-specific logic (use hvac/)
-    - Infrastructure utilities (use shared/utils/)
+Future exports (Phase 2+):
+    - BaseEntity: Base class for all entities
+    - BaseValueObject: Base class for all value objects
+    - DomainEvent: Base class for domain events
 """
+
+from .exceptions import DomainException
+
+__all__ = [
+    "DomainException",
+]

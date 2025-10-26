@@ -1,19 +1,56 @@
 """
-HVAC Subdomain - Core Business Logic for HVAC Matching
+HVAC Subdomain Module
 
-Responsibility:
-    Contains all HVAC-specific business rules and domain model.
-    Handles parameter extraction, validation, and matching logic.
+Core business logic for HVAC product matching.
+Contains entities, value objects, services, and repository interfaces.
 
-Contains:
-    To be implemented in Phase 1-3:
-    - Entities (HVACDescription, MatchResult)
-    - Value Objects (DN, PN, Material, ValveType)
-    - Domain Services (ParameterExtractor, MatchingEngine)
-    - Repository interfaces (HVACDescriptionRepository)
+This module is the main entry point for the HVAC subdomain and re-exports
+all public interfaces for use by Application Layer.
 
-Does NOT contain:
-    - Database implementations (use Infrastructure repositories)
-    - File processing (use Infrastructure file storage)
-    - API models (use API layer)
+Exports:
+    Entities:
+        - HVACDescription: Core entity representing HVAC product description
+
+    Value Objects:
+        - MatchScore: Hybrid scoring (parameter + semantic)
+        - MatchResult: Result of matching operation
+
+    Services:
+        - MatchingEngineProtocol: Core matching service (Protocol interface)
+
+    Repository Interfaces:
+        - HVACDescriptionRepositoryProtocol: Data persistence contract
+
+Usage:
+    >>> # Import from subdomain module
+    >>> from src.domain.hvac import HVACDescription, MatchResult, MatchingEngineProtocol
+    >>>
+    >>> # Or import from specific submodules
+    >>> from src.domain.hvac.entities import HVACDescription
+    >>> from src.domain.hvac.value_objects import MatchScore, MatchResult
+    >>> from src.domain.hvac.services import MatchingEngineProtocol
 """
+
+# Entities
+from .entities import HVACDescription
+
+# Value Objects
+from .value_objects import MatchResult, MatchScore
+
+# Services
+from .services import MatchingEngineProtocol
+
+# Repository Interfaces
+from .repositories import HVACDescriptionRepositoryProtocol
+
+__all__ = [
+    # Entities
+    "HVACDescription",
+    # Value Objects
+    "MatchScore",
+    "MatchResult",
+    # Services
+    "MatchingEngineProtocol",
+    # Repository Interfaces
+    "HVACDescriptionRepositoryProtocol",
+]

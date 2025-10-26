@@ -1,16 +1,19 @@
 """
-HVAC Entities
+HVAC Entities Module
 
-Responsibility:
-    Core domain entities with identity and lifecycle.
-    Encapsulate business rules and behavior.
+Domain entities with identity and lifecycle.
+Entities are defined by their unique ID, not their attributes.
 
-Contains:
-    To be implemented in Phase 2:
-    - HVACDescription - Main entity representing HVAC item description
-    - MatchResult - Entity representing matching result between two descriptions
+This module exports:
+    - HVACDescription: Core entity representing HVAC product description
 
-Does NOT contain:
-    - Data Transfer Objects (use API models)
-    - Database models (use Infrastructure persistence)
+Future exports (Phase 2+):
+    - MatchSession: Entity tracking entire matching session
+    - PriceQuote: Entity representing final pricing result
 """
+
+from .hvac_description import HVACDescription
+
+__all__ = [
+    "HVACDescription",
+]

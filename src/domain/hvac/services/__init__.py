@@ -1,17 +1,20 @@
 """
-HVAC Domain Services
+HVAC Domain Services Module
 
-Responsibility:
-    Business operations that don't naturally fit into entities.
-    Stateless services operating on domain objects.
+Business operations that don't naturally fit into entities.
+Domain services operate on multiple entities or coordinate complex logic.
 
-Contains:
-    To be implemented in Phase 2-3:
-    - ParameterExtractor - Extract DN, PN, materials from text
-    - MatchingEngine - Calculate similarity between descriptions
-    - ScoringEngine - Calculate match scores with business rules
+This module exports:
+    - MatchingEngineProtocol: Core matching service (Protocol interface)
 
-Does NOT contain:
-    - Infrastructure concerns (file I/O, database)
-    - Application orchestration (use Application services)
+Future exports (Phase 2+):
+    - ParameterExtractor: Extract DN, PN, materials from text
+    - ScoringEngine: Calculate hybrid match scores
+    - ValidationService: Validate HVAC business rules
 """
+
+from .matching_engine import MatchingEngineProtocol
+
+__all__ = [
+    "MatchingEngineProtocol",
+]

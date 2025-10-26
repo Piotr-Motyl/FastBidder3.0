@@ -25,10 +25,10 @@ This project demonstrates production-grade architecture principles: **Clean Arch
 - [x] Makefile commands (14 commands)
 - [x] Git repository configured
 
-**Phase 1: High-Level Contracts** ✅ **COMPLETED**
+**Phase 1: High-Level Contracts** 🔄 **COMPLETED**
 - [x] Task 1.1.1: API Layer contracts (matching + jobs endpoints)
 - [x] Task 1.1.2: Application Layer contracts (Commands, Queries, Use Cases, Celery tasks)
-- [ ] Task 1.1.3: Domain Layer contracts (Entities, Services, Value Objects)
+- [x] Task 1.1.3: Domain Layer contracts (Entities, Services, Value Objects)
 - [ ] Task 1.1.4: Infrastructure Layer contracts (FileStorage, Redis, Excel services)
 
 **Next Steps:** Task 1.1.3 - Domain Layer contracts
@@ -36,7 +36,7 @@ This project demonstrates production-grade architecture principles: **Clean Arch
 **Phases Overview:**
 ```
 Phase 0: Setup          ✅ Done
-Phase 1: Contracts      🔄 In Progress (50%)
+Phase 1: Contracts      🔄 In Progress (75%)
 Phase 2: Detailed       ⏳ Pending
 Phase 3: Implementation ⏳ Pending
 Phase 4: AI Integration ⏳ Pending
@@ -120,11 +120,11 @@ fastbidder/
 │   │
 │   ├── domain/                  # Domain Layer (Business Logic)
 │   │   ├── hvac/                # HVAC Bounded Context
-│   │   │   ├── entities/        # ⏳ HVACDescription, MatchResult (pending)
-│   │   │   ├── value_objects/   # ⏳ DN, PN, Material (pending)
-│   │   │   ├── services/        # ⏳ MatchingEngine, ParameterExtractor (pending)
-│   │   │   └── repositories/    # ⏳ Repository interfaces (pending)
-│   │   └── shared/              # ⏳ Base classes (pending)
+│   │   │   ├── entities/        # ✅ HVACDescription (contract)
+│   │   │   ├── value_objects/   # ✅ MatchScore, MatchResult (contracts)
+│   │   │   ├── services/        # ✅ MatchingEngineProtocol (contract)
+│   │   │   └── repositories/    # ✅ HVACDescriptionRepositoryProtocol (contract)
+│   │   └── shared/              # ✅ DomainException (contract)
 │   │
 │   ├── infrastructure/          # Infrastructure Layer (External)
 │   │   ├── persistence/
@@ -265,9 +265,12 @@ Legend:
 ### Domain Layer
 | File | Responsibility | Status | Key Components |
 |------|---------------|--------|----------------|
-| `domain/hvac/entities/` | Business entities | ⏳ Pending | `HVACDescription`, `MatchResult` |
-| `domain/hvac/value_objects/` | Validated values | ⏳ Pending | `DN`, `PN`, `Material` |
-| `domain/hvac/services/` | Business logic | ⏳ Pending | `MatchingEngine`, `ParameterExtractor` |
+| `domain/hvac/entities/hvac_description.py` | Core entity | 📝 Contract | `HVACDescription` |
+| `domain/hvac/value_objects/match_score.py` | Hybrid scoring | 📝 Contract | `MatchScore` |
+| `domain/hvac/value_objects/match_result.py` | Match result | 📝 Contract | `MatchResult` |
+| `domain/hvac/services/matching_engine.py` | Matching service | 📝 Contract | `MatchingEngineProtocol` |
+| `domain/hvac/repositories/hvac_description_repository.py` | Repository interface | 📝 Contract | `HVACDescriptionRepositoryProtocol` |
+| `domain/shared/exceptions.py` | Domain exceptions | 📝 Contract | `DomainException` |
 
 ### Infrastructure Layer
 | File | Responsibility | Status | Key Components |
@@ -509,4 +512,4 @@ This project is for portfolio purposes. All rights reserved.
 
 ---
 
-**Last Updated:** Phase 1 - Task 1.1.2 completed (2025-01-11)
+**Last Updated:** Phase 1 - Task 1.1.3 completed (2025-10-26)

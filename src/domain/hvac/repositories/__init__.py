@@ -1,16 +1,19 @@
 """
-HVAC Repository Interfaces
+HVAC Repository Interfaces Module
 
-Responsibility:
-    Define contracts for data persistence without implementation.
-    Part of domain but implemented in Infrastructure layer.
+Repository pattern interfaces (contracts) for data persistence.
+Defined in Domain Layer, implemented in Infrastructure Layer.
 
-Contains:
-    To be implemented in Phase 3:
-    - HVACDescriptionRepository interface
-    - MatchResultRepository interface
+This module exports:
+    - HVACDescriptionRepositoryProtocol: Repository interface for HVACDescription
 
-Does NOT contain:
-    - Actual implementations (belong to Infrastructure layer)
-    - Database-specific code (SQL, Redis commands)
+Future exports (Phase 2+):
+    - MatchResultRepositoryProtocol: Repository for storing match results
+    - CacheRepositoryProtocol: Generic cache interface
 """
+
+from .hvac_description_repository import HVACDescriptionRepositoryProtocol
+
+__all__ = [
+    "HVACDescriptionRepositoryProtocol",
+]
