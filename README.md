@@ -2,9 +2,9 @@
 
 > AI-powered HVAC product matching system with hybrid parameter + semantic search
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)
-[![Celery](https://img.shields.io/badge/Celery-5.3+-red.svg)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com/)
+[![Celery](https://img.shields.io/badge/Celery-5.3+-red.svg)](https://docs.celeryq.dev/)
 
 ## 📖 About The Project
 
@@ -25,18 +25,18 @@ This project demonstrates production-grade architecture principles: **Clean Arch
 - [x] Makefile commands (14 commands)
 - [x] Git repository configured
 
-**Phase 1: High-Level Contracts** 🔄 **COMPLETED**
+**Phase 1: High-Level Contracts** ✅ **COMPLETED**
 - [x] Task 1.1.1: API Layer contracts (matching + jobs endpoints)
 - [x] Task 1.1.2: Application Layer contracts (Commands, Queries, Use Cases, Celery tasks)
 - [x] Task 1.1.3: Domain Layer contracts (Entities, Services, Value Objects)
-- [ ] Task 1.1.4: Infrastructure Layer contracts (FileStorage, Redis, Excel services)
+- [x] Task 1.1.4: Infrastructure Layer contracts (FileStorage, Redis, Excel services)
 
-**Next Steps:** Task 1.1.3 - Domain Layer contracts
+**Next Steps:** Phase 2 - Detailed contracts and validations
 
 **Phases Overview:**
 ```
 Phase 0: Setup          ✅ Done
-Phase 1: Contracts      🔄 In Progress (75%)
+Phase 1: Contracts      ✅ Done (100%)
 Phase 2: Detailed       ⏳ Pending
 Phase 3: Implementation ⏳ Pending
 Phase 4: AI Integration ⏳ Pending
@@ -69,8 +69,8 @@ FastBidder follows **Clean Architecture** with strict dependency rules:
                │ depends on
 ┌──────────────▼──────────────────────────┐
 │       Domain Layer (Business Logic)     │  ← Core business rules
-│  - Entities (HVACDescription, Match)    │
-│  - Value Objects (DN, PN, Material)     │
+│  - Entities (HVACDescription)           │
+│  - Value Objects (MatchScore, Result)   │
 │  - Domain Services (MatchingEngine)     │
 │  - Repository Interfaces                │
 └──────────────▲──────────────────────────┘
@@ -80,6 +80,7 @@ FastBidder follows **Clean Architecture** with strict dependency rules:
 │  - Redis (progress tracking, cache)     │
 │  - File Storage (Excel files)           │
 │  - Repository Implementations           │
+│  - Matching Engine Implementation       │
 └─────────────────────────────────────────┘
 ```
 
@@ -98,56 +99,82 @@ fastbidder/
 ├── src/
 │   ├── api/                     # API Layer (Presentation)
 │   │   └── routers/
-│   │       ├── matching.py      # ✅ POST /matching/process (contract)
-│   │       ├── jobs.py          # ✅ GET /jobs/{job_id}/status (contract)
-│   │       └── __init__.py      # ✅ Router exports
+│   │       ├── matching.py      # 📝 POST /matching/process (contract)
+│   │       ├── jobs.py          # 📝 GET /jobs/{job_id}/status (contract)
+│   │       └── __init__.py
 │   │
 │   ├── application/             # Application Layer (Orchestration)
-│   │   ├── commands/            # CQRS Write Operations
-│   │   │   ├── process_matching.py  # ✅ ProcessMatchingCommand (contract)
+│   │   ├── commands/
+│   │   │   ├── process_matching.py  # 📝 ProcessMatchingCommand
 │   │   │   └── __init__.py
-│   │   ├── queries/             # CQRS Read Operations
-│   │   │   ├── get_job_status.py    # ✅ GetJobStatusQuery + Handler (contract)
+│   │   ├── queries/
+│   │   │   ├── get_job_status.py    # 📝 GetJobStatusQuery + Handler
 │   │   │   └── __init__.py
-│   │   ├── services/            # Use Cases
-│   │   │   ├── process_matching_use_case.py  # ✅ ProcessMatchingUseCase (contract)
+│   │   ├── services/
+│   │   │   ├── process_matching_use_case.py  # 📝 ProcessMatchingUseCase
 │   │   │   └── __init__.py
-│   │   ├── tasks/               # Celery Async Tasks
-│   │   │   ├── celery_app.py   # ✅ Celery config (working)
-│   │   │   ├── matching_tasks.py    # ✅ process_matching_task (contract)
+│   │   ├── tasks/
+│   │   │   ├── celery_app.py        # ✅ Celery config (working)
+│   │   │   ├── matching_tasks.py    # 📝 process_matching_task
 │   │   │   └── __init__.py
-│   │   └── models.py            # ✅ Shared models (JobStatus enum)
+│   │   └── models.py                # ✅ JobStatus enum
 │   │
 │   ├── domain/                  # Domain Layer (Business Logic)
-│   │   ├── hvac/                # HVAC Bounded Context
-│   │   │   ├── entities/        # ✅ HVACDescription (contract)
-│   │   │   ├── value_objects/   # ✅ MatchScore, MatchResult (contracts)
-│   │   │   ├── services/        # ✅ MatchingEngineProtocol (contract)
-│   │   │   └── repositories/    # ✅ HVACDescriptionRepositoryProtocol (contract)
-│   │   └── shared/              # ✅ DomainException (contract)
+│   │   ├── hvac/
+│   │   │   ├── entities/
+│   │   │   │   ├── hvac_description.py      # 📝 HVACDescription
+│   │   │   │   └── __init__.py
+│   │   │   ├── value_objects/
+│   │   │   │   ├── match_score.py           # 📝 MatchScore
+│   │   │   │   ├── match_result.py          # 📝 MatchResult
+│   │   │   │   └── __init__.py
+│   │   │   ├── services/
+│   │   │   │   ├── matching_engine.py       # 📝 MatchingEngineProtocol
+│   │   │   │   └── __init__.py
+│   │   │   └── repositories/
+│   │   │       ├── hvac_description_repository.py  # 📝 Protocol
+│   │   │       └── __init__.py
+│   │   └── shared/
+│   │       ├── exceptions.py                # 📝 DomainException
+│   │       └── __init__.py
 │   │
 │   ├── infrastructure/          # Infrastructure Layer (External)
 │   │   ├── persistence/
-│   │   │   └── redis/           # ⏳ Redis client, progress tracker (pending)
-│   │   └── file_storage/        # ⏳ Excel reader/writer with Polars (pending)
+│   │   │   ├── redis/
+│   │   │   │   ├── progress_tracker.py      # 📝 RedisProgressTracker
+│   │   │   │   └── __init__.py
+│   │   │   ├── repositories/
+│   │   │   │   ├── hvac_description_repository.py  # 📝 Implementation
+│   │   │   │   └── __init__.py
+│   │   │   └── __init__.py
+│   │   ├── file_storage/
+│   │   │   ├── file_storage_service.py      # 📝 FileStorageService
+│   │   │   ├── excel_reader.py              # 📝 ExcelReaderService
+│   │   │   ├── excel_writer.py              # 📝 ExcelWriterService
+│   │   │   └── __init__.py
+│   │   ├── matching/
+│   │   │   ├── matching_engine.py           # 📝 ConcreteMatchingEngine
+│   │   │   └── __init__.py
+│   │   └── __init__.py
 │   │
-│   └── shared/                  # ⏳ Cross-cutting utilities (pending)
+│   └── shared/                  # Cross-cutting concerns
+│       └── utils/
 │
 ├── docker/
-│   ├── Dockerfile               # ✅ Poetry + Celery worker
-│   └── .dockerignore            # ✅
+│   ├── Dockerfile
+│   └── .dockerignore
 │
-├── docker-compose.yml           # ✅ Redis + Celery + Flower
-├── Makefile                     # ✅ 14 development commands
-├── pyproject.toml               # ✅ Poetry dependencies
-├── poetry.lock                  # ✅
-├── .env                         # ✅ Environment variables
-├── .env.example                 # ✅ Template
-└── README.md                    # ✅ This file
+├── docker-compose.yml
+├── Makefile
+├── pyproject.toml
+├── poetry.lock
+├── .env
+├── .env.example
+└── README.md
 
 Legend:
 ✅ Implemented/Working
-📝 Contract defined (no implementation yet)
+📝 Contract defined (implementation in Phase 3)
 ⏳ Pending (not started)
 ```
 
@@ -186,9 +213,9 @@ Legend:
         ↓
 5. Celery Worker (background)
    - Loads Excel files (Polars)
-   - Extracts descriptions
+   - Extracts descriptions (HVACDescription entities)
    - Extracts parameters (DN, PN, etc.)
-   - Matches descriptions (MatchingEngine)
+   - Matches descriptions (ConcreteMatchingEngine)
    - Generates results with prices
    - Updates progress in Redis (0% → 100%)
         ↓
@@ -239,6 +266,7 @@ Legend:
             │         Infrastructure Layer           │
             │  - Redis (progress, cache)             │
             │  - FileStorage (Excel files)           │
+            │  - MatchingEngine (hybrid algorithm)   │
             └────────────────────────────────────────┘
 ```
 
@@ -268,15 +296,19 @@ Legend:
 | `domain/hvac/entities/hvac_description.py` | Core entity | 📝 Contract | `HVACDescription` |
 | `domain/hvac/value_objects/match_score.py` | Hybrid scoring | 📝 Contract | `MatchScore` |
 | `domain/hvac/value_objects/match_result.py` | Match result | 📝 Contract | `MatchResult` |
-| `domain/hvac/services/matching_engine.py` | Matching service | 📝 Contract | `MatchingEngineProtocol` |
+| `domain/hvac/services/matching_engine.py` | Matching service interface | 📝 Contract | `MatchingEngineProtocol` |
 | `domain/hvac/repositories/hvac_description_repository.py` | Repository interface | 📝 Contract | `HVACDescriptionRepositoryProtocol` |
 | `domain/shared/exceptions.py` | Domain exceptions | 📝 Contract | `DomainException` |
 
 ### Infrastructure Layer
 | File | Responsibility | Status | Key Components |
 |------|---------------|--------|----------------|
-| `infrastructure/persistence/redis/` | Redis operations | ⏳ Pending | `RedisProgressTracker` |
-| `infrastructure/file_storage/` | Excel file operations | ⏳ Pending | `ExcelReaderService`, `ExcelWriterService` |
+| `infrastructure/persistence/redis/progress_tracker.py` | Job progress tracking | 📝 Contract | `RedisProgressTracker` |
+| `infrastructure/persistence/repositories/hvac_description_repository.py` | Redis-based storage | 📝 Contract | `HVACDescriptionRepository` |
+| `infrastructure/file_storage/file_storage_service.py` | File management | 📝 Contract | `FileStorageService` |
+| `infrastructure/file_storage/excel_reader.py` | Excel parsing (Polars) | 📝 Contract | `ExcelReaderService` |
+| `infrastructure/file_storage/excel_writer.py` | Excel generation (Polars) | 📝 Contract | `ExcelWriterService` |
+| `infrastructure/matching/matching_engine.py` | Hybrid matching implementation | 📝 Contract | `ConcreteMatchingEngine` |
 
 ---
 
@@ -380,6 +412,7 @@ MAX_DESCRIPTIONS_PER_REQUEST=100  # Phase 1 limit
 # File Processing
 MAX_FILE_SIZE_MB=10
 ALLOWED_EXTENSIONS=.xlsx,.xls
+TEMP_DIR=/tmp/fastbidder
 ```
 
 ### Docker Services
@@ -512,4 +545,4 @@ This project is for portfolio purposes. All rights reserved.
 
 ---
 
-**Last Updated:** Phase 1 - Task 1.1.3 completed (2025-10-26)
+**Last Updated:** Phase 1 - Task 1.1.4 completed (2025-01-11)
