@@ -1,16 +1,14 @@
 """
-Repository Implementations
+Repository Implementations Module
 
-Responsibility:
-    Concrete implementations of domain repository interfaces.
-    Translates domain objects to/from persistence layer.
+Concrete implementations of Domain repository interfaces.
 
-Contains:
-    To be implemented in Phase 3:
-    - Redis-based repository implementations
-    - Data mappers (domain ↔ persistence)
-
-Does NOT contain:
-    - Repository interfaces (defined in Domain layer)
-    - Business logic
+Exports:
+    - HVACDescriptionRepository: Redis-based implementation
 """
+
+from .hvac_description_repository import HVACDescriptionRepository
+
+__all__ = [
+    "HVACDescriptionRepository",
+]
