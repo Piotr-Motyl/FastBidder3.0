@@ -1,51 +1,61 @@
+version: '3.8'
+
 services:
   redis:
     image: redis:7-alpine
     container_name: fastbidder_redis
     ports:
       - "6379:6379"
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
-    healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
-      interval: 5s
-      timeout: 3s
-      retries: 5
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --appendfsync everysec
     networks:
       - fastbidder_network
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 3s
+      retries: 3
 
   celery_worker:
     build:
       context: .
       dockerfile: docker/Dockerfile
     container_name: fastbidder_celery_worker
-    command: celery -A src.application.tasks worker --loglevel=info --pool=solo
+    command: celery -A src.application.tasks worker --loglevel=info
     volumes:
       - ./src:/app/src
-    env_file:
-      - .env
+      - ./logs:/app/logs
+      - /tmp/fastbidder:/tmp/fastbidder # For local file storage
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - PYTHONPATH=/app
     depends_on:
       redis:
         condition: service_healthy
     networks:
       - fastbidder_network
-    restart: unless-stopped
 
   flower:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
+    image: mher/flower:2.0
     container_name: fastbidder_flower
-    command: celery -A src.application.tasks flower --port=5555
+    command: celery --broker=redis://redis:6379/0 flower --port=5555
     ports:
       - "5555:5555"
-    env_file:
-      - .env
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
     depends_on:
+      - redis
       - celery_worker
     networks:
       - fastbidder_network
-    restart: unless-stopped
 
 networks:
   fastbidder_network:
     driver: bridge
+
+volumes:
+  redis_data:
+    driver: local

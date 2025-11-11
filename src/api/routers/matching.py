@@ -25,9 +25,6 @@ Does NOT contain:
 Phase 1 Note:
     This is a CONTRACT ONLY. Implementation will be added in Phase 3.
     All endpoints raise NotImplementedError.
-
-FIX:
-    JobStatus now imported from Application Layer (correct dependency direction).
 """
 
 from typing import Optional, Dict, Any
@@ -36,7 +33,6 @@ from uuid import UUID
 from fastapi import APIRouter, status, HTTPException, Depends
 from pydantic import BaseModel, Field
 
-# Import JobStatus from Application Layer (correct dependency direction)
 from src.application.models import JobStatus
 
 
@@ -45,38 +41,75 @@ from src.application.models import JobStatus
 # ============================================================================
 
 
+class Range(BaseModel):
+    """Range of rows in Excel (1-based indexing like Excel)."""
+
+    start: int = Field(ge=1, description="Start row (Excel notation, 1-based)")
+    end: int = Field(ge=1, description="End row (Excel notation, 1-based)")
+
+
+class WorkingFileConfig(BaseModel):
+    """Configuration for working file (file to be priced)."""
+
+    file_id: str = Field(description="UUID of working file as string")
+    description_column: str = Field(description="Column with descriptions (e.g., 'C')")
+    description_range: Range = Field(description="Range of rows with descriptions")
+    price_target_column: str = Field(description="Column where prices will be written")
+    matching_report_column: Optional[str] = Field(
+        default=None, description="Column for match report (score + matched item name)"
+    )
+
+
+class ReferenceFileConfig(BaseModel):
+    """Configuration for reference file (price catalog)."""
+
+    file_id: str = Field(description="UUID of reference file as string")
+    description_column: str = Field(description="Column with descriptions (e.g., 'B')")
+    description_range: Range = Field(description="Range of rows with descriptions")
+    price_source_column: str = Field(description="Column with prices to copy")
+
+
 class ProcessMatchingRequest(BaseModel):
     """
-    Request model for triggering matching process.
+    Request to trigger matching process with column mappings.
 
-    Attributes:
-        wf_file_id: UUID of uploaded working file
-        ref_file_id: UUID of uploaded reference file
-        threshold: Similarity threshold percentage (0.0-100.0)
+    User specifies exactly which columns and ranges to use in each file.
+    This gives full control over Excel structure handling.
 
-    Validation:
-        - wf_file_id and ref_file_id must be valid UUIDs
-        - wf_file_id != ref_file_id (validated in Command layer)
-        - threshold must be between 0.0 and 100.0 (inclusive)
+    Validation Notes (Phase 2+):
+        - file_ids must exist in storage
+        - file_ids must be different
+        - ranges must be valid (start < end)
+        - columns must exist in files
+        - threshold > 0 for meaningful results
     """
 
-    wf_file_id: UUID = Field(description="UUID of working file uploaded to system")
-
-    ref_file_id: UUID = Field(description="UUID of reference file uploaded to system")
-
-    threshold: float = Field(
+    working_file: WorkingFileConfig
+    reference_file: ReferenceFileConfig
+    matching_threshold: float = Field(
         default=75.0,
-        ge=0.0,
+        ge=1.0,
         le=100.0,
-        description="Similarity threshold percentage. Matches below this value will be filtered out.",
+        description="Similarity threshold percentage. Matches below this value will be ignored.",
     )
 
     class Config:
         json_schema_extra = {
             "example": {
-                "wf_file_id": "a3bb189e-8bf9-3888-9912-ace4e6543002",
-                "ref_file_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-                "threshold": 80.0,
+                "working_file": {
+                    "file_id": "a3bb189e-8bf9-3888-9912-ace4e6543002",
+                    "description_column": "C",
+                    "description_range": {"start": 2, "end": 10},
+                    "price_target_column": "F",
+                    "matching_report_column": "G",
+                },
+                "reference_file": {
+                    "file_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+                    "description_column": "B",
+                    "description_range": {"start": 2, "end": 20},
+                    "price_source_column": "D",
+                },
+                "matching_threshold": 80.0,
             }
         }
 
@@ -94,15 +127,14 @@ class ProcessMatchingResponse(BaseModel):
         message: Human-readable message about job status
     """
 
-    job_id: UUID = Field(description="Celery task ID for tracking job progress")
+    job_id: str = Field(description="Celery task ID for tracking job progress")
 
     status: JobStatus = Field(
         default=JobStatus.QUEUED, description="Current status of the job"
     )
 
     estimated_time: int = Field(
-        ge=0,
-        description="Estimated time to completion in seconds (based on file size and historical data)",
+        description="Estimated time to completion in seconds (based on file size and historical data)"
     )
 
     message: str = Field(
@@ -187,20 +219,16 @@ async def get_process_matching_use_case():
 
     Note:
         Implementation in Phase 3 (Task 3.4.1).
-        Will inject actual use case with all dependencies:
-        - Celery app
-        - FileStorageService
+        Will inject actual use case with all its dependencies:
+        - FileStorageService for validating files exist
+        - Celery app for triggering async tasks
+        - ProgressTracker for initializing job tracking
 
-    Example implementation (Phase 3):
-        from src.application.services import ProcessMatchingUseCase
-        from src.application.tasks import celery_app
-        from src.infrastructure.file_storage import get_file_storage_service
-
-        file_storage = get_file_storage_service()
-        return ProcessMatchingUseCase(celery_app, file_storage)
+    The use case will validate business rules and trigger Celery task.
     """
+    # Implementation in Phase 3
     raise NotImplementedError(
-        "ProcessMatchingUseCase not implemented yet - will be added in Task 1.1.2"
+        "ProcessMatchingUseCase not implemented yet - will be added in Task 1.1.2/3.4.1"
     )
 
 
@@ -213,47 +241,42 @@ async def get_process_matching_use_case():
     "/process",
     status_code=status.HTTP_202_ACCEPTED,
     response_model=ProcessMatchingResponse,
-    summary="Trigger asynchronous matching process",
+    summary="Trigger async matching process",
     description=(
-        "Triggers an asynchronous Celery task to match HVAC descriptions "
-        "from working file against reference file with prices. "
-        "Returns immediately with job_id for status tracking."
+        "Initiates asynchronous matching process between working file "
+        "(to be priced) and reference file (price catalog). "
+        "Returns immediately with job_id for status tracking. "
+        "Process runs in background via Celery."
     ),
     responses={
         202: {
-            "description": "Accepted - Job queued successfully",
+            "description": "Success - Job queued for processing",
             "model": ProcessMatchingResponse,
         },
         400: {
-            "description": "Bad Request - Invalid file IDs or same files provided",
-            "model": ErrorResponse,
+            "description": "Bad Request - Invalid parameters (e.g., identical file IDs)",
         },
-        404: {
-            "description": "Not Found - One or both file IDs not found",
-            "model": ErrorResponse,
-        },
-        422: {
-            "description": "Unprocessable Entity - Validation error",
-            "model": ErrorResponse,
-        },
+        404: {"description": "Not Found - One or both files not found in storage"},
+        422: {"description": "Unprocessable Entity - Request validation failed"},
     },
 )
 async def process_matching(
-    request: ProcessMatchingRequest, use_case=Depends(get_process_matching_use_case)
+    request: ProcessMatchingRequest,
+    use_case=Depends(get_process_matching_use_case),
 ) -> ProcessMatchingResponse:
     """
-    Trigger asynchronous HVAC matching process.
+    Trigger asynchronous matching process with column mappings.
 
     Process Flow:
-    1. Validate input parameters (file IDs, threshold)
-    2. Create ProcessMatchingCommand from request
-    3. Delegate to Application Layer use case
-    4. Use case validates file existence and format
-    5. Use case triggers Celery task
-    6. Return 202 Accepted with job_id for status tracking
+        1. Validate input parameters (file IDs, column mappings, threshold)
+        2. Create ProcessMatchingCommand from request
+        3. Delegate to Application Layer use case
+        4. Use case validates file existence and format
+        5. Use case triggers Celery task
+        6. Return 202 Accepted with job_id for status tracking
 
     Args:
-        request: ProcessMatchingRequest with file IDs and threshold
+        request: ProcessMatchingRequest with file configs and threshold
         use_case: Injected ProcessMatchingUseCase from Application Layer
 
     Returns:
@@ -262,7 +285,7 @@ async def process_matching(
     Raises:
         HTTPException 400: If file IDs are identical or invalid format
         HTTPException 404: If one or both files not found in storage
-        HTTPException 422: If threshold validation fails
+        HTTPException 422: If threshold or column validation fails
         HTTPException 500: If unexpected error during job creation
 
     Architecture Note:
@@ -283,9 +306,9 @@ async def process_matching(
     #
     # try:
     #     command = ProcessMatchingCommand(
-    #         wf_file_id=request.wf_file_id,
-    #         ref_file_id=request.ref_file_id,
-    #         threshold=request.threshold
+    #         working_file=request.working_file.dict(),
+    #         reference_file=request.reference_file.dict(),
+    #         matching_threshold=request.matching_threshold
     #     )
     #     result = await use_case.execute(command)
     #

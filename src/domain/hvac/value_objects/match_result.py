@@ -21,11 +21,6 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
-
-# Avoid circular imports while maintaining type safety
-if TYPE_CHECKING:
-    from ..entities.hvac_description import HVACDescription
-
 from .match_score import MatchScore
 
 
@@ -105,8 +100,8 @@ class MatchResult(BaseModel):
         - breakdown is flexible dict (for future expansion)
     """
 
-    matched_item_id: UUID = Field(
-        ..., description="UUID of the matched reference description"
+    matched_reference_id: UUID = Field(
+        description="UUID of matched item from reference catalog"
     )
 
     score: MatchScore = Field(
@@ -216,7 +211,7 @@ class MatchResult(BaseModel):
             }
         """
         return {
-            "matched_item_id": str(self.matched_item_id),
+            "matched_item_id": str(self.matched_reference_id),
             "score": self.score.to_dict(),
             "confidence": self.confidence,
             "message": self.message,
@@ -275,7 +270,7 @@ class MatchResult(BaseModel):
         )
 
         return cls(
-            matched_item_id=matched_item_id,
+            matched_reference_id=matched_item_id,
             score=score,
             confidence=confidence,
             message=message,

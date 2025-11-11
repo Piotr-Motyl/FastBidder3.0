@@ -37,6 +37,7 @@ from fastapi import APIRouter, status, HTTPException, Path, Depends
 from pydantic import BaseModel, Field
 
 # Import shared models - now from Application Layer (correct dependency direction)
+from application.queries.get_job_status import GetJobStatusQueryHandler
 from src.application.models import JobStatus
 
 
@@ -219,10 +220,8 @@ async def get_job_status_query_handler():
     },
 )
 async def get_job_status(
-    job_id: UUID = Path(
-        description="Celery task ID returned from POST /matching/process or other async endpoints"
-    ),
-    handler=Depends(get_job_status_query_handler),
+    job_id: UUID = Path(...),
+    handler: GetJobStatusQueryHandler = Depends(get_job_status_query_handler),
 ) -> JobStatusResponse:
     """
     Get current status and progress of asynchronous job.
