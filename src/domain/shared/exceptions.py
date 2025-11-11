@@ -64,3 +64,85 @@ class DomainException(Exception):
     def __repr__(self) -> str:
         """Developer-friendly representation."""
         return f"{self.__class__.__name__}(message={self.message!r})"
+
+
+class InvalidDNValueError(DomainException):
+    """
+    Raised when DN (Diameter Nominal) value is invalid.
+
+    This exception is raised when:
+    - DN value is outside valid range (15-1000mm)
+    - DN value is not a standard HVAC size
+    - DN string cannot be parsed
+    - DN format is unrecognized
+
+    Examples:
+        >>> raise InvalidDNValueError("DN must be 15-1000, got 10")
+        >>> raise InvalidDNValueError("Cannot parse DN from 'XYZ123'")
+    """
+
+    def __init__(self, message: str, original_value: str | None = None) -> None:
+        """
+        Initialize DN validation error.
+
+        Args:
+            message: Error description
+            original_value: Original input string that caused the error (optional)
+        """
+        self.original_value = original_value
+        super().__init__(message)
+
+
+class InvalidPNValueError(DomainException):
+    """
+    Raised when PN (Pressure Nominal) value is invalid.
+
+    This exception is raised when:
+    - PN value is outside valid range (1-100 bar)
+    - PN value is not a standard pressure class
+    - PN string cannot be parsed
+    - PN format is unrecognized
+
+    Examples:
+        >>> raise InvalidPNValueError("PN must be 1-100, got 150")
+        >>> raise InvalidPNValueError("Cannot parse PN from 'ABC'")
+    """
+
+    def __init__(self, message: str, original_value: str | None = None) -> None:
+        """
+        Initialize PN validation error.
+
+        Args:
+            message: Error description
+            original_value: Original input string that caused the error (optional)
+        """
+        self.original_value = original_value
+        super().__init__(message)
+
+
+class IncompatibleDNPNError(DomainException):
+    """
+    Raised when DN and PN combination is not compatible.
+
+    According to HVAC standards, certain DN/PN combinations are not physically
+    possible or safe. For example, DN15 cannot have PN100 pressure rating.
+
+    Examples:
+        >>> raise IncompatibleDNPNError("DN15 cannot support PN100")
+        >>> raise IncompatibleDNPNError("DN800 with PN6 is below safety limits")
+    """
+
+    def __init__(
+        self, message: str, dn_value: int | None = None, pn_value: int | None = None
+    ) -> None:
+        """
+        Initialize DN/PN compatibility error.
+
+        Args:
+            message: Error description
+            dn_value: DN value that caused incompatibility (optional)
+            pn_value: PN value that caused incompatibility (optional)
+        """
+        self.dn_value = dn_value
+        self.pn_value = pn_value
+        super().__init__(message)
