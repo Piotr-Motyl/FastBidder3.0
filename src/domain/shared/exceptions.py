@@ -146,3 +146,31 @@ class IncompatibleDNPNError(DomainException):
         self.dn_value = dn_value
         self.pn_value = pn_value
         super().__init__(message)
+
+
+class InvalidHVACDescriptionError(DomainException):
+    """
+    Raised when HVACDescription entity validation fails.
+
+    This exception is raised when:
+    - raw_text is empty or too short (< 3 characters)
+    - raw_text is not a string
+    - Invalid state transition attempted
+    - Invalid price value (negative)
+    - Invalid match_score type
+
+    Examples:
+        >>> raise InvalidHVACDescriptionError("raw_text must have at least 3 characters")
+        >>> raise InvalidHVACDescriptionError("Price cannot be negative, got -100")
+    """
+
+    def __init__(self, message: str, field_name: str | None = None) -> None:
+        """
+        Initialize HVAC description validation error.
+
+        Args:
+            message: Error description
+            field_name: Name of field that caused error (optional)
+        """
+        self.field_name = field_name
+        super().__init__(message)

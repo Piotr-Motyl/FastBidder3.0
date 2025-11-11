@@ -1,337 +1,384 @@
 """
-HVACDescription Entity
+HVACDescription Entity.
 
-Core domain entity representing an HVAC/plumbing product description.
-This is the central business object in the FastBidder domain model.
+Core domain entity representing a single HVAC product description.
+This entity has identity (UUID) and lifecycle (state transitions).
 
-Responsibility:
-    - Represent HVAC item descriptions (from WF or REF files)
-    - Store extracted parameters (DN, PN, material, type)
-    - Track matching state (score, matched reference)
-    - Encapsulate business validation rules
-
-Architecture Notes:
-    - Entity (has identity, has lifecycle, mutable)
-    - Part of HVAC subdomain
-    - Uses Pydantic for validation (NOT frozen - entity is mutable)
-    - Phase 1: Minimal version (only essential fields for happy path)
+Unlike Value Objects, Entities are mutable and track their state over time.
 """
 
-from typing import Any, Optional
+from dataclasses import dataclass, field
+from datetime import datetime
+from decimal import Decimal
+from enum import Enum
+from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from src.domain.hvac.value_objects.match_score import MatchScore
+from src.domain.shared.exceptions import InvalidHVACDescriptionError
 
 
-class HVACDescription(BaseModel):
+class HVACDescriptionState(str, Enum):
     """
-    Domain entity representing an HVAC/plumbing product description.
+    Lifecycle states of HVACDescription entity.
 
-    This entity is used for both:
-    - Working file (WF) descriptions: Items to be priced
-    - Reference catalog (REF) descriptions: Catalog with prices
+    State transitions represent the processing pipeline:
+    CREATED -> PARAMETERS_EXTRACTED -> MATCHED -> PRICED
 
-    Lifecycle:
-    1. Created from Excel row with raw text
-    2. Parameters extracted (DN, PN, material, etc.) → extracted_parameters populated
-    3. Matched against catalog → match_score and matched_reference_id set
-    4. Serialized for result export
+    States:
+        CREATED: Initial state after creation from raw text
+        PARAMETERS_EXTRACTED: Technical parameters (DN, PN, etc.) extracted
+        MATCHED: Successfully matched with reference description
+        PRICED: Price information merged from matching result
+    """
+
+    CREATED = "created"
+    PARAMETERS_EXTRACTED = "parameters_extracted"
+    MATCHED = "matched"
+    PRICED = "priced"
+
+
+@dataclass
+class HVACDescription:
+    """
+    Mutable entity representing HVAC product description with lifecycle tracking.
+
+    This is a core domain entity that encapsulates:
+    - Raw textual description from Excel
+    - Extracted technical parameters (DN, PN, material, etc.)
+    - Matching results and scores
+    - Price information from reference catalog
+    - Processing state tracking
+
+    The entity follows a state machine pattern:
+    CREATED -> PARAMETERS_EXTRACTED -> MATCHED -> PRICED
 
     Attributes:
-        id: Unique identifier for this description
-            - Generated automatically (uuid4)
-            - Used for references and lookups
-            - Immutable once created
-
-        raw_text: Description text from Excel (trimmed whitespace)
-            - Leading/trailing whitespace automatically removed for consistency
-            - Preserves internal formatting and structure
-            - Validated to ensure not empty
-            - Example input: "  Zawór kulowy DN50  " → stored as "Zawór kulowy DN50"
-
-        extracted_parameters: Dictionary of extracted HVAC parameters
-            - Populated by ParameterExtractor domain service
-            - Keys: 'dn', 'pn', 'material', 'valve_type', 'drive_type', etc.
-            - Values: Parsed values (int for DN/PN, str for types)
-            - Empty dict {} if no parameters extracted
-            - Example: {'dn': 50, 'pn': 16, 'valve_type': 'kulowy', 'drive': 'elektryczny'}
-
-        match_score: Final matching score (0-100)
-            - None before matching (initial state)
-            - Set by MatchingEngine after matching
-            - Based on hybrid algorithm (40% param + 60% semantic)
-            - Only set if match found above threshold
-
-        matched_reference_id: UUID of matched reference description
-            - None before matching (initial state)
-            - Set to UUID of best match from reference catalog
-            - Used to retrieve price and details from reference
-            - Only set if match found above threshold
+        id: Unique identifier (UUID4, auto-generated)
+        raw_text: Original description text from Excel (min 3 characters)
+        extracted_params: Dictionary of extracted technical parameters
+        match_score: Hybrid matching score (None if not matched yet)
+        source_row_number: Excel row number for tracking (optional)
+        file_id: Source file identifier (optional)
+        matched_price: Price from matched reference description (optional)
+        state: Current processing state
+        created_at: Entity creation timestamp
+        updated_at: Last modification timestamp
 
     Examples:
-        >>> # Create new description from Excel
         >>> desc = HVACDescription(
-        ...     raw_text="  Zawór kulowy DN50 PN16 mosiężny  "
+        ...     raw_text="Zawór kulowy DN50 PN16 mosiężny",
+        ...     source_row_number=10,
+        ...     file_id=UUID("...")
         ... )
-        >>> desc.raw_text  # Whitespace trimmed
-        'Zawór kulowy DN50 PN16 mosiężny'
-        >>> desc.id  # Auto-generated UUID
-        UUID('...')
-        >>> desc.extracted_parameters
-        {}
-        >>> desc.has_parameters()
-        False
-
-        >>> # After parameter extraction
-        >>> desc.extracted_parameters = {'dn': 50, 'pn': 16, 'material': 'brass'}
-        >>> desc.has_parameters()
-        True
+        >>> desc.state
+        <HVACDescriptionState.CREATED: 'created'>
         >>> desc.is_valid()
         True
-
-        >>> # After matching
-        >>> desc.match_score = 95.2
-        >>> desc.matched_reference_id = UUID("...")
-
-    Business Rules:
-        - raw_text cannot be empty or only whitespace
-        - extracted_parameters defaults to {} (empty dict)
-        - match_score must be in range [0, 100] if present
-        - Leading/trailing whitespace is automatically removed from raw_text
-
-    Phase 1 Scope (Minimal):
-        - Only essential fields for happy path workflow
-        - No price/metadata fields (added in Phase 2)
-        - No created_at/updated_at timestamps (added when persistence needed)
-        - No validation_errors field (added in Phase 2)
-        - No Pydantic model validator for match consistency (added in Phase 2)
+        >>> desc.has_parameters()
+        False
     """
 
-    id: UUID = Field(
-        default_factory=uuid4, description="Unique identifier for this description"
-    )
+    # Required fields
+    raw_text: str
 
-    raw_text: str = Field(
-        ...,
-        description="Description text from Excel (leading/trailing whitespace trimmed)",
-        min_length=1,
-        max_length=1000,
-    )
+    # Optional tracking fields
+    source_row_number: int | None = None
+    file_id: UUID | None = None
 
-    extracted_parameters: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Extracted HVAC parameters (DN, PN, material, type, etc.)",
-    )
+    # Processing results (populated during pipeline)
+    extracted_params: dict[str, Any] = field(default_factory=dict)
+    match_score: MatchScore | None = None
+    matched_price: Decimal | None = None
 
-    match_score: Optional[float] = Field(
-        default=None,
-        description="Final matching score (0-100), None if not matched yet",
-        ge=0.0,
-        le=100.0,
-    )
+    # State tracking
+    state: HVACDescriptionState = HVACDescriptionState.CREATED
 
-    matched_reference_id: Optional[UUID] = Field(
-        default=None,
-        description="UUID of matched reference description, None if not matched yet",
-    )
+    # Identity and timestamps (auto-generated)
+    id: UUID = field(default_factory=uuid4)
+    created_at: datetime = field(default_factory=datetime.now)
+    updated_at: datetime = field(default_factory=datetime.now)
 
-    model_config = {
-        "frozen": False,  # Entity is mutable (can update match_score, etc.)
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-                    "raw_text": "Zawór kulowy DN50 PN16 mosiężny z napędem elektrycznym",
-                    "extracted_parameters": {
-                        "dn": 50,
-                        "pn": 16,
-                        "material": "brass",
-                        "valve_type": "ball",
-                        "drive_type": "electric",
-                    },
-                    "match_score": 95.2,
-                    "matched_reference_id": "7b9c3d8e-4f21-4a5b-8c9d-1e2f3a4b5c6d",
-                }
-            ]
-        },
-    }
+    # Minimum text length for valid description
+    MIN_TEXT_LENGTH: int = 3
 
-    @field_validator("raw_text")
-    @classmethod
-    def validate_raw_text_not_empty(cls, v: str) -> str:
+    def __post_init__(self) -> None:
         """
-        Validate that raw_text is not empty and trim whitespace.
+        Validate and normalize entity after initialization.
 
-        Business rule: Description must contain meaningful text.
-        Normalization: Leading/trailing whitespace is removed for consistency.
-
-        Args:
-            v: Raw text value to validate
-
-        Returns:
-            Validated raw text with leading/trailing whitespace removed
+        Called automatically by dataclass after __init__.
+        Performs validation and text normalization.
 
         Raises:
-            ValueError: If text is empty or only whitespace
-
-        Examples:
-            >>> # Whitespace trimming
-            >>> desc = HVACDescription(raw_text="  Zawór DN50  ")
-            >>> desc.raw_text
-            'Zawór DN50'
-
-            >>> # Empty text rejected
-            >>> desc = HVACDescription(raw_text="   ")
-            ValueError: raw_text cannot be empty or only whitespace
+            InvalidHVACDescriptionError: If raw_text is invalid
         """
-        stripped = v.strip()
-        if not stripped:
-            raise ValueError("raw_text cannot be empty or only whitespace")
-        return stripped
+        self._validate_text(self.raw_text)
+        self.raw_text = self._normalize_text(self.raw_text)
 
-    def has_parameters(self) -> bool:
+    def _validate_text(self, text: str) -> None:
         """
-        Check if any parameters have been extracted.
+        Validate raw_text meets business rules.
 
-        Used to determine if ParameterExtractor has been run on this description.
-        Empty dict means either:
-        - Parameters not extracted yet
-        - No recognizable parameters in the text
+        Business rules:
+        - Text must be non-empty string
+        - Text must have at least MIN_TEXT_LENGTH characters (after strip)
+
+        Args:
+            text: Text to validate
+
+        Raises:
+            InvalidHVACDescriptionError: If validation fails
+        """
+        if not isinstance(text, str):
+            raise InvalidHVACDescriptionError(
+                f"raw_text must be string, got {type(text).__name__}"
+            )
+
+        if not text or len(text.strip()) < self.MIN_TEXT_LENGTH:
+            raise InvalidHVACDescriptionError(
+                f"raw_text must have at least {self.MIN_TEXT_LENGTH} characters, "
+                f"got {len(text.strip())}"
+            )
+
+    def _normalize_text(self, text: str) -> str:
+        """
+        Normalize text by removing extra whitespace.
+
+        Normalization steps:
+        1. Strip leading/trailing whitespace
+        2. Replace multiple spaces with single space
+        3. Replace tabs and newlines with spaces
+
+        Args:
+            text: Text to normalize
 
         Returns:
-            True if extracted_parameters is not empty, False otherwise
+            Normalized text
 
         Examples:
-            >>> desc = HVACDescription(raw_text="Zawór DN50")
-            >>> desc.has_parameters()
-            False
-            >>> desc.extracted_parameters = {'dn': 50}
-            >>> desc.has_parameters()
-            True
+            >>> self._normalize_text("  Zawór  DN50  ")
+            'Zawór DN50'
+            >>> self._normalize_text("Zawór\\n\\nDN50")
+            'Zawór DN50'
         """
-        return bool(self.extracted_parameters)
+        # Replace tabs and newlines with spaces
+        text = text.replace("\t", " ").replace("\n", " ").replace("\r", " ")
+
+        # Replace multiple spaces with single space
+        while "  " in text:
+            text = text.replace("  ", " ")
+
+        # Strip leading/trailing whitespace
+        return text.strip()
 
     def is_valid(self) -> bool:
         """
-        Check if description has minimum required data for matching.
+        Check if description meets minimum validity requirements.
 
-        Business rule: A valid description must have:
-        - Non-empty raw text
-        - At least one extracted parameter
-
-        This method is used to filter out invalid descriptions before
-        sending them to the MatchingEngine.
+        A description is considered valid if:
+        - raw_text is not empty and >= MIN_TEXT_LENGTH
+        - No validation errors would be raised
 
         Returns:
-            True if description has raw_text and parameters, False otherwise
+            True if description is valid, False otherwise
 
         Examples:
             >>> desc = HVACDescription(raw_text="Zawór DN50")
             >>> desc.is_valid()
-            False  # No parameters extracted yet
-
-            >>> desc.extracted_parameters = {'dn': 50}
+            True
+            >>> desc.raw_text = ""
             >>> desc.is_valid()
-            True  # Has text and parameters
-        """
-        return bool(self.raw_text.strip()) and self.has_parameters()
-
-    def is_matched(self) -> bool:
-        """
-        Check if this description has been successfully matched.
-
-        A description is considered matched if:
-        - match_score is set (not None)
-        - matched_reference_id is set (not None)
-
-        Note: Phase 1 does not enforce consistency between these fields
-        (no Pydantic validator). This may be added in Phase 2 if needed.
-
-        Returns:
-            True if both match_score and matched_reference_id are set
-
-        Examples:
-            >>> desc = HVACDescription(raw_text="Zawór DN50")
-            >>> desc.is_matched()
             False
+        """
+        try:
+            self._validate_text(self.raw_text)
+            return True
+        except InvalidHVACDescriptionError:
+            return False
 
-            >>> desc.match_score = 95.2
-            >>> desc.matched_reference_id = UUID("...")
-            >>> desc.is_matched()
+    def has_parameters(self) -> bool:
+        """
+        Check if technical parameters have been extracted.
+
+        Returns:
+            True if extracted_params contains at least one parameter
+
+        Examples:
+            >>> desc = HVACDescription(raw_text="Zawór DN50")
+            >>> desc.has_parameters()
+            False
+            >>> desc.extracted_params = {"dn": DiameterNominal(50)}
+            >>> desc.has_parameters()
             True
         """
-        return self.match_score is not None and self.matched_reference_id is not None
+        return bool(self.extracted_params)
 
     def to_dict(self) -> dict[str, Any]:
         """
-        Convert entity to dictionary representation.
+        Serialize entity to dictionary for storage/transport.
 
-        Useful for:
-        - JSON serialization for API responses
-        - Celery task results
-        - Redis cache storage
-        - Excel export
-        - Logging and debugging
+        Converts entity to JSON-serializable dictionary.
+        Nested objects (MatchScore, Value Objects) are also serialized.
 
         Returns:
-            Dictionary with all entity fields
+            Dictionary representation of entity
 
         Examples:
-            >>> desc = HVACDescription(
-            ...     raw_text="Zawór DN50 PN16",
-            ...     extracted_parameters={'dn': 50, 'pn': 16},
-            ...     match_score=95.2,
-            ...     matched_reference_id=UUID("7b9c3d8e-...")
-            ... )
-            >>> desc.to_dict()
-            {
-                'id': '3fa85f64-...',
-                'raw_text': 'Zawór DN50 PN16',
-                'extracted_parameters': {'dn': 50, 'pn': 16},
-                'match_score': 95.2,
-                'matched_reference_id': '7b9c3d8e-...'
-            }
+            >>> desc = HVACDescription(raw_text="Zawór DN50")
+            >>> data = desc.to_dict()
+            >>> data['raw_text']
+            'Zawór DN50'
+            >>> data['state']
+            'created'
         """
         return {
             "id": str(self.id),
             "raw_text": self.raw_text,
-            "extracted_parameters": self.extracted_parameters,
-            "match_score": self.match_score,
-            "matched_reference_id": (
-                str(self.matched_reference_id) if self.matched_reference_id else None
-            ),
+            "extracted_params": self._serialize_params(self.extracted_params),
+            "match_score": self.match_score.to_dict() if self.match_score else None,
+            "source_row_number": self.source_row_number,
+            "file_id": str(self.file_id) if self.file_id else None,
+            "matched_price": str(self.matched_price) if self.matched_price else None,
+            "state": self.state.value,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
         }
 
-    @classmethod
-    def from_excel_row(cls, raw_text: str) -> "HVACDescription":
+    def _serialize_params(self, params: dict[str, Any]) -> dict[str, Any]:
         """
-        Factory method to create HVACDescription from Excel row.
+        Serialize extracted parameters to JSON-compatible format.
 
-        This is the primary entry point for creating descriptions from user input.
-        Used by ExcelReaderService in Infrastructure layer.
+        Handles conversion of Value Objects (DN, PN) to strings.
 
         Args:
-            raw_text: Description text from Excel cell (whitespace will be trimmed)
+            params: Dictionary of parameters to serialize
 
         Returns:
-            New HVACDescription instance with:
-            - Auto-generated UUID
-            - Trimmed raw_text
-            - Empty extracted_parameters (to be populated later)
-            - None match fields (to be populated after matching)
+            Serialized parameters dictionary
+        """
+        serialized = {}
+        for key, value in params.items():
+            # Check if value has to_string method (Value Objects)
+            if hasattr(value, "to_string"):
+                serialized[key] = value.to_string()
+            # Check if value has value attribute (Value Objects alternative)
+            elif hasattr(value, "value"):
+                serialized[key] = value.value
+            else:
+                serialized[key] = value
+        return serialized
+
+    def merge_with_price(
+        self, price: Decimal, matched_description: str, match_score: MatchScore
+    ) -> None:
+        """
+        Merge price information from matching result.
+
+        Updates entity with:
+        - Matched price from reference catalog
+        - Match score details
+        - State transition to PRICED
+        - Updated timestamp
+
+        Args:
+            price: Price from matched reference description
+            matched_description: Text of matched reference description (for reporting)
+            match_score: Matching score details
 
         Raises:
-            ValidationError: If raw_text is empty or invalid
+            InvalidHVACDescriptionError: If price is negative or match_score is invalid
 
         Examples:
-            >>> desc = HVACDescription.from_excel_row(
-            ...     "  Zawór kulowy DN50 PN16 mosiężny  "
+            >>> desc = HVACDescription(raw_text="Zawór DN50")
+            >>> desc.merge_with_price(
+            ...     price=Decimal("250.00"),
+            ...     matched_description="Zawór kulowy DN50 PN16",
+            ...     match_score=MatchScore(...)
             ... )
-            >>> desc.raw_text
-            'Zawór kulowy DN50 PN16 mosiężny'
-            >>> desc.has_parameters()
-            False
-            >>> desc.is_matched()
-            False
+            >>> desc.state
+            <HVACDescriptionState.PRICED: 'priced'>
+            >>> desc.matched_price
+            Decimal('250.00')
         """
-        return cls(raw_text=raw_text)
+        if price < 0:
+            raise InvalidHVACDescriptionError(f"Price cannot be negative, got {price}")
+
+        if not isinstance(match_score, MatchScore):
+            raise InvalidHVACDescriptionError(
+                f"match_score must be MatchScore instance, got {type(match_score).__name__}"
+            )
+
+        self.matched_price = price
+        self.match_score = match_score
+        self.extracted_params["_matched_description"] = matched_description
+        self.state = HVACDescriptionState.PRICED
+        self.updated_at = datetime.now()
+
+    def get_match_report(self) -> str | None:
+        """
+        Generate human-readable matching report.
+
+        Creates formatted string with matching details for Excel export.
+        Returns None if description hasn't been matched yet.
+
+        Format: "Matched: <description> | Score: <score>% | DN: <dn> | PN: <pn>"
+
+        Returns:
+            Formatted matching report string or None if not matched
+
+        Examples:
+            >>> desc = HVACDescription(raw_text="Zawór DN50")
+            >>> desc.get_match_report()
+            None
+            >>> desc.merge_with_price(Decimal("250"), "Zawór DN50 PN16", score)
+            >>> desc.get_match_report()
+            'Matched: Zawór DN50 PN16 | Score: 95.2% | Price: 250.00 PLN'
+        """
+        if not self.match_score or self.state not in (
+            HVACDescriptionState.MATCHED,
+            HVACDescriptionState.PRICED,
+        ):
+            return None
+
+        matched_desc = self.extracted_params.get("_matched_description", "N/A")
+        score_pct = self.match_score.final_score
+
+        report_parts = [f"Matched: {matched_desc}", f"Score: {score_pct:.1f}%"]
+
+        if self.matched_price:
+            report_parts.append(f"Price: {self.matched_price} PLN")
+
+        # Add key parameters if available
+        if "dn" in self.extracted_params:
+            dn = self.extracted_params["dn"]
+            dn_str = dn.to_string() if hasattr(dn, "to_string") else str(dn)
+            report_parts.append(f"DN: {dn_str}")
+
+        if "pn" in self.extracted_params:
+            pn = self.extracted_params["pn"]
+            pn_str = pn.to_string() if hasattr(pn, "to_string") else str(pn)
+            report_parts.append(f"PN: {pn_str}")
+
+        return " | ".join(report_parts)
+
+    def __repr__(self) -> str:
+        """
+        Developer-friendly representation.
+
+        Returns:
+            String representation for debugging
+        """
+        return (
+            f"HVACDescription(id={self.id}, "
+            f"raw_text='{self.raw_text[:50]}...', "
+            f"state={self.state.value})"
+        )
+
+    def __str__(self) -> str:
+        """
+        User-friendly representation.
+
+        Returns:
+            Readable string representation
+        """
+        return f"{self.raw_text} [{self.state.value}]"

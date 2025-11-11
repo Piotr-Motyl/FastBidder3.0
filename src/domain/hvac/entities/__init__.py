@@ -1,19 +1,20 @@
 """
-HVAC Entities Module
+HVAC Domain Entities.
 
-Domain entities with identity and lifecycle.
-Entities are defined by their unique ID, not their attributes.
+This module exports all entities used in the HVAC domain.
+Entities have identity and lifecycle - they are mutable objects tracked by ID.
 
-This module exports:
+Available Entities:
     - HVACDescription: Core entity representing HVAC product description
-
-Future exports (Phase 2+):
-    - MatchSession: Entity tracking entire matching session
-    - PriceQuote: Entity representing final pricing result
+    - HVACDescriptionState: Enum representing entity lifecycle states
 """
 
-from .hvac_description import HVACDescription
+from src.domain.hvac.entities.hvac_description import (
+    HVACDescription,
+    HVACDescriptionState,
+)
 
 __all__ = [
     "HVACDescription",
+    "HVACDescriptionState",
 ]
