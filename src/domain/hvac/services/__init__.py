@@ -14,7 +14,11 @@ Future exports (Phase 2+):
 """
 
 from .matching_engine import MatchingEngineProtocol
+from .parameter_extractor import ParameterExtractorProtocol
+from .simple_matching_engine import SimpleMatchingEngine
 
 __all__ = [
     "MatchingEngineProtocol",
+    "ParameterExtractorProtocol",
+    "SimpleMatchingEngine",
 ]

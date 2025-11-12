@@ -43,6 +43,11 @@ from .services import MatchingEngineProtocol
 # Repository Interfaces
 from .repositories import HVACDescriptionRepositoryProtocol
 
+from . import constants
+from . import patterns
+
+from . import matching_config
+
 __all__ = [
     # Entities
     "HVACDescription",
@@ -53,4 +58,7 @@ __all__ = [
     "MatchingEngineProtocol",
     # Repository Interfaces
     "HVACDescriptionRepositoryProtocol",
+    "constants",
+    "patterns",
+    "matching_config",
 ]

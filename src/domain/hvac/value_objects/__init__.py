@@ -19,10 +19,12 @@ from src.domain.hvac.value_objects.pressure_nominal import PressureNominal
 # For now, we import only the new Value Objects from Task 2.1.1
 from src.domain.hvac.value_objects.match_score import MatchScore
 from src.domain.hvac.value_objects.match_result import MatchResult
+from .extracted_parameters import ExtractedParameters
 
 __all__ = [
     "DiameterNominal",
     "PressureNominal",
     "MatchScore",
     "MatchResult",
+    "ExtractedParameters",
 ]
