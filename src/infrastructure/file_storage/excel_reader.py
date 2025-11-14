@@ -10,20 +10,29 @@ Responsibility:
     - Handle various Excel structures (different column positions)
     - Convert to HVACDescription entities
     - Validate Excel structure (required columns present)
+    - Cache DataFrames for performance (in-memory, per-instance)
+    - Handle encoding fallback (UTF-8 → CP1250)
+    - Validate file size limits (max 10MB)
 
 Architecture Notes:
     - Infrastructure Layer (depends on Polars library)
     - Used by Application Layer (ProcessMatchingUseCase)
     - Phase 1: Simple column extraction
-    - Phase 2: Advanced column detection, multi-sheet support
+    - Phase 2: Detailed contract with cache, validation, encoding fallback
 """
 
 from pathlib import Path
 from typing import Optional
+from uuid import UUID
 
 import polars as pl
 
 from src.domain.hvac import HVACDescription
+from src.domain.shared.exceptions import (
+    FileSizeExceededError,
+    ExcelParsingError,
+    ColumnNotFoundError,
+)
 
 
 class ExcelReaderService:
@@ -65,74 +74,394 @@ class ExcelReaderService:
         ...     print(desc.raw_text)
     """
 
+    # Maximum file size in bytes (10MB - aligned with FileStorageService)
+    MAX_FILE_SIZE_BYTES: int = 10 * 1024 * 1024
+
     def __init__(self) -> None:
         """
         Initialize Excel reader service.
 
         Phase 1: No configuration needed (uses Polars defaults).
-        Phase 2: Add caching, column detection strategies.
+        Phase 2: Caching enabled, encoding fallback configured.
+
+        Attributes:
+            _dataframe_cache: In-memory cache for loaded DataFrames
+                Key: (file_path_str, sheet_name)
+                Value: Polars DataFrame
+                Scope: Per-instance (not shared between instances)
         """
-        pass
+        # Initialize in-memory cache for DataFrames
+        # Cache key: (file_path as string, sheet_name)
+        self._dataframe_cache: dict[tuple[str, str], pl.DataFrame] = {}
 
     async def read_descriptions(
         self,
         file_path: Path,
-        description_column: str,  # e.g., "B" or "C" or column index
-        start_row: int = 2,
-        max_rows: Optional[int] = None,
+        description_column: str,  # e.g., "B" or "C" (Excel letter notation)
+        start_row: int = 2,  # 1-based Excel notation
+        end_row: Optional[int] = None,  # 1-based Excel notation (inclusive)
+        sheet_name: Optional[str] = None,  # Sheet name, None = first sheet
+        file_id: Optional[UUID] = None,  # File UUID for tracking
     ) -> list[HVACDescription]:
         """
-        Read HVAC descriptions from Excel file.
+        Read HVAC descriptions from Excel file (Phase 2 - Detailed Contract).
 
-        Extracts description text from specified column and converts
-        to HVACDescription entities.
+        Extracts description text from specified column and range, converts
+        to HVACDescription entities with full metadata (row number, file ID).
+
+        Process Flow:
+            1. Validate file size (max 10MB)
+            2. Load Excel file into Polars DataFrame (with cache)
+            3. Validate that description_column exists in DataFrame
+            4. Extract text from specified column and row range
+            5. Filter out empty rows (where description is None or "")
+            6. Create HVACDescription entities with metadata
+            7. Return list of entities
 
         Args:
             file_path: Path to Excel file (.xlsx or .xls)
-            description_column: Column containing descriptions (letter or index)
-                - Letter: "A", "B", "C", etc.
-                - Index: 0, 1, 2, etc. (0-based)
-            start_row: First data row (1-based, default 2 to skip header)
-            max_rows: Maximum rows to read (default None = all rows)
-                - Phase 1: Limit to 100 for testing
+            description_column: Column containing descriptions (Excel letter notation)
+                - Examples: "A", "B", "C", "AA", "AB", "ZZ"
+                - Must be uppercase (A-ZZ range validated by Command layer)
+            start_row: First data row to read (1-based Excel notation, inclusive)
+                - Default: 2 (skips header row)
+                - Example: start_row=2 means Excel row 2 (second row)
+            end_row: Last data row to read (1-based Excel notation, inclusive)
+                - Default: None (reads until end of data)
+                - Example: end_row=100 means Excel row 100
+                - If None: reads all rows from start_row to end
+            sheet_name: Name of Excel sheet to read
+                - Default: None (reads first sheet)
+                - Example: "Sheet1", "Dane", "Reference"
+            file_id: UUID of source file (for HVACDescription.file_id)
+                - Default: None (not tracked)
+                - Used for tracing data back to source file
 
         Returns:
-            List of HVACDescription entities (one per row)
-            Empty list if no valid descriptions found
+            List of HVACDescription entities (one per non-empty row)
+            - Each entity has:
+                * raw_text: Description text (trimmed, normalized)
+                * source_row_number: Excel row number (1-based)
+                * file_id: Source file UUID (if provided)
+            - Empty list if no valid descriptions found in range
 
         Raises:
-            FileNotFoundError: If Excel file doesn't exist
-            ValueError: If column not found or Excel structure invalid
-            PolarsError: If file cannot be parsed
+            FileNotFoundError: If Excel file doesn't exist at file_path
+            FileSizeExceededError: If file size > 10MB (MAX_FILE_SIZE_BYTES)
+            ExcelParsingError: If Polars cannot parse Excel file
+                - Invalid Excel format
+                - Encoding issues (after UTF-8 and CP1250 fallback)
+                - Corrupted file
+            ColumnNotFoundError: If description_column doesn't exist in DataFrame
+                - Example: column="Z" but Excel only has columns A-E
+            ValueError: If start_row > end_row or invalid parameters
 
         Examples:
             >>> reader = ExcelReaderService()
+            >>> from uuid import UUID
             >>>
-            >>> # Read from column B, skip header row
+            >>> # Read from column C, rows 2-100, first sheet
             >>> descriptions = await reader.read_descriptions(
-            ...     file_path=Path("working_file.xlsx"),
-            ...     description_column="B",
+            ...     file_path=Path("/tmp/job-123/working_file.xlsx"),
+            ...     description_column="C",
             ...     start_row=2,
-            ...     max_rows=100
+            ...     end_row=100,
+            ...     sheet_name=None,  # First sheet
+            ...     file_id=UUID("a3bb189e-8bf9-3888-9912-ace4e6543002")
             ... )
             >>>
-            >>> # First description
+            >>> # Check results
+            >>> print(f"Read {len(descriptions)} descriptions")
             >>> print(descriptions[0].raw_text)
-            'Zawór kulowy DN50 PN16'
-            >>> print(descriptions[0].has_parameters())
-            False  # Parameters not extracted yet
+            'Zawór kulowy DN50 PN16 mosiężny'
+            >>> print(descriptions[0].source_row_number)
+            2  # Excel row 2 (1-based)
+            >>> print(descriptions[0].file_id)
+            UUID('a3bb189e-8bf9-3888-9912-ace4e6543002')
 
-        Implementation Notes:
-            - Use Polars read_excel() with engine="xlsx2csv" or "calamine"
-            - Convert column letter to index if needed (A=0, B=1, etc.)
-            - Skip empty rows automatically
-            - Trim whitespace from descriptions (validator handles this)
+        Implementation Details (Phase 3):
+            - Use Polars read_excel() with engine="calamine" (fast Rust-based)
+            - Fallback to engine="openpyxl" if calamine fails
+            - Encoding: Try UTF-8, fallback to CP1250 (Polish chars)
+            - Cache DataFrame in memory: key=(file_path_str, sheet_name)
+            - Convert column letter to 0-based index using ProcessMatchingCommand.column_to_index()
+            - Skip rows where description cell is None or "" (after trim)
+            - Trim whitespace from each description text
             - Use HVACDescription.from_excel_row() factory method
+            - source_row_number uses Excel 1-based notation (row 1 = first row)
+
+        Performance Notes:
+            - DataFrame cached per (file_path, sheet_name)
+            - Second read_descriptions() call on same file uses cache (no disk I/O)
+            - Cache persists for instance lifetime
+            - Polars is 10x faster than Pandas for large files
+            - Calamine engine is faster than openpyxl (Rust vs Python)
+
+        Phase 2 Notes:
+            - This is a DETAILED CONTRACT for happy path
+            - Max 1000 rows per file (validated by ProcessMatchingCommand)
+            - No multi-threading (Phase 3+)
+            - No streaming (loads entire file to memory)
+            - Cache has no TTL/LRU (simple dict, cleared manually or on instance destruction)
         """
         raise NotImplementedError(
             "read_descriptions() to be implemented in Phase 3. "
             "Will use Polars to read Excel, extract column, create HVACDescription entities."
         )
+
+    def _validate_file_size(self, file_path: Path) -> None:
+        """
+        Validate that file size is within allowed limit.
+
+        Business Rule: Max 10MB per Excel file (aligned with FileStorageService).
+
+        Args:
+            file_path: Path to Excel file to validate
+
+        Raises:
+            FileNotFoundError: If file doesn't exist
+            FileSizeExceededError: If file size > MAX_FILE_SIZE_BYTES (10MB)
+
+        Examples:
+            >>> reader = ExcelReaderService()
+            >>> reader._validate_file_size(Path("small.xlsx"))  # OK, < 10MB
+            >>> reader._validate_file_size(Path("huge.xlsx"))  # Raises FileSizeExceededError
+
+        Implementation (Phase 3):
+            - Check if file exists: file_path.exists()
+            - Get file size: file_path.stat().st_size
+            - Compare with MAX_FILE_SIZE_BYTES
+            - Raise FileSizeExceededError if exceeded with human-readable message
+        """
+        raise NotImplementedError(
+            "_validate_file_size() to be implemented in Phase 3."
+        )
+
+    def _load_excel_dataframe(
+        self, file_path: Path, sheet_name: Optional[str] = None
+    ) -> pl.DataFrame:
+        """
+        Load Excel file into Polars DataFrame with caching.
+
+        Loads Excel file using Polars read_excel() with:
+        - Engine: calamine (fast Rust-based), fallback to openpyxl
+        - Encoding: UTF-8, fallback to CP1250 (Polish characters)
+        - Cache: Stores DataFrame in _dataframe_cache for reuse
+
+        Args:
+            file_path: Path to Excel file
+            sheet_name: Name of sheet to read (None = first sheet)
+
+        Returns:
+            Polars DataFrame with Excel data
+
+        Raises:
+            ExcelParsingError: If file cannot be parsed by Polars
+                - Invalid Excel format
+                - Encoding errors (after UTF-8 and CP1250 attempts)
+                - Corrupted file
+                - Unsupported Excel version
+
+        Cache Behavior:
+            - First call: Loads from disk, stores in cache
+            - Subsequent calls: Returns cached DataFrame (no disk I/O)
+            - Cache key: (file_path as string, sheet_name)
+            - Cache lifetime: Instance lifetime (no TTL/LRU)
+
+        Examples:
+            >>> reader = ExcelReaderService()
+            >>> df1 = reader._load_excel_dataframe(Path("file.xlsx"), None)
+            >>> # Second call uses cache (fast)
+            >>> df2 = reader._load_excel_dataframe(Path("file.xlsx"), None)
+            >>> assert df1 is df2  # Same object from cache
+
+        Implementation (Phase 3):
+            - Create cache key: (str(file_path), sheet_name or "")
+            - Check cache: if key in self._dataframe_cache, return cached
+            - Try read with calamine:
+                pl.read_excel(file_path, sheet_name=sheet_name, engine="calamine")
+            - If calamine fails, try openpyxl:
+                pl.read_excel(file_path, sheet_name=sheet_name, engine="openpyxl")
+            - If both fail, wrap exception in ExcelParsingError
+            - Store in cache before returning
+            - Encoding errors handled by Polars internally (UTF-8 → CP1250)
+        """
+        raise NotImplementedError(
+            "_load_excel_dataframe() to be implemented in Phase 3."
+        )
+
+    def _validate_column_exists(
+        self, dataframe: pl.DataFrame, column: str
+    ) -> None:
+        """
+        Validate that column exists in DataFrame.
+
+        Converts Excel column letter (e.g., "C", "AA") to 0-based index
+        and checks if it exists in DataFrame columns.
+
+        Args:
+            dataframe: Polars DataFrame to check
+            column: Excel column letter (e.g., "C", "AA")
+
+        Raises:
+            ColumnNotFoundError: If column doesn't exist in DataFrame
+                - Example: column="Z" but DataFrame only has 5 columns (A-E)
+
+        Examples:
+            >>> reader = ExcelReaderService()
+            >>> df = pl.DataFrame({"A": [1], "B": [2], "C": [3]})
+            >>> reader._validate_column_exists(df, "C")  # OK
+            >>> reader._validate_column_exists(df, "Z")  # Raises ColumnNotFoundError
+
+        Implementation (Phase 3):
+            - Import ProcessMatchingCommand.column_to_index()
+            - Convert column letter to 0-based index
+            - Check if index < len(dataframe.columns)
+            - If not exists, raise ColumnNotFoundError with details:
+                "Column '{column}' (index {index}) not found.
+                 File has {num_cols} columns: {col_names}"
+        """
+        raise NotImplementedError(
+            "_validate_column_exists() to be implemented in Phase 3."
+        )
+
+    def _extract_column_range(
+        self,
+        dataframe: pl.DataFrame,
+        column: str,
+        start_row: int,
+        end_row: Optional[int],
+    ) -> list[tuple[str, int]]:
+        """
+        Extract text values from column and row range, skip empty rows.
+
+        Extracts description text from specified column and row range.
+        Filters out rows where description is None or empty string (after trim).
+        Returns list of (text, excel_row_number) tuples.
+
+        Args:
+            dataframe: Polars DataFrame with Excel data
+            column: Excel column letter (e.g., "C")
+            start_row: First row to extract (1-based Excel notation, inclusive)
+            end_row: Last row to extract (1-based Excel notation, inclusive)
+                - None means extract until end of DataFrame
+
+        Returns:
+            List of tuples: (description_text, excel_row_number)
+            - description_text: Trimmed string from cell
+            - excel_row_number: Excel row number (1-based)
+            - Empty rows are filtered out
+
+        Raises:
+            ValueError: If start_row > end_row
+
+        Examples:
+            >>> reader = ExcelReaderService()
+            >>> df = pl.DataFrame({
+            ...     "A": [1, 2, 3, 4],
+            ...     "B": ["Zawór DN50", "", "Zawór DN25", None]
+            ... })
+            >>> results = reader._extract_column_range(df, "B", start_row=1, end_row=4)
+            >>> # Returns: [("Zawór DN50", 1), ("Zawór DN25", 3)]
+            >>> # Rows 2 and 4 filtered out (empty string and None)
+
+        Implementation (Phase 3):
+            - Convert column letter to 0-based index using column_to_index()
+            - Convert start_row/end_row from 1-based to 0-based for DataFrame slicing
+            - Slice DataFrame: df[start_idx:end_idx]
+            - Get column data: df[column_name]
+            - Iterate over rows with enumerate:
+                for df_idx, value in enumerate(column_data):
+                    excel_row = start_row + df_idx  # Convert back to 1-based
+                    if value is not None:
+                        text = str(value).strip()
+                        if text:  # Skip empty after trim
+                            yield (text, excel_row)
+            - Return list of tuples
+
+        Row Number Mapping:
+            - DataFrame uses 0-based indexing: df[0] = first row
+            - Excel uses 1-based indexing: row 1 = first row
+            - start_row=2 in Excel → df[1] in DataFrame
+            - Formula: df_index = excel_row - 1
+            - Reverse: excel_row = df_index + start_row
+        """
+        raise NotImplementedError(
+            "_extract_column_range() to be implemented in Phase 3."
+        )
+
+    def _create_hvac_descriptions(
+        self,
+        text_with_rows: list[tuple[str, int]],
+        file_id: Optional[UUID],
+    ) -> list[HVACDescription]:
+        """
+        Create HVACDescription entities from text and row numbers.
+
+        Converts list of (text, row_number) tuples into HVACDescription entities
+        using factory method from_excel_row().
+
+        Args:
+            text_with_rows: List of tuples (description_text, excel_row_number)
+            file_id: UUID of source file (for tracing)
+
+        Returns:
+            List of HVACDescription entities with metadata:
+            - raw_text: Description text
+            - source_row_number: Excel row number (1-based)
+            - file_id: Source file UUID
+
+        Examples:
+            >>> reader = ExcelReaderService()
+            >>> data = [
+            ...     ("Zawór DN50 PN16", 2),
+            ...     ("Zawór DN25 PN10", 4)
+            ... ]
+            >>> file_id = UUID("a3bb189e-8bf9-3888-9912-ace4e6543002")
+            >>> descriptions = reader._create_hvac_descriptions(data, file_id)
+            >>> print(descriptions[0].raw_text)
+            'Zawór DN50 PN16'
+            >>> print(descriptions[0].source_row_number)
+            2
+            >>> print(descriptions[0].file_id)
+            UUID('a3bb189e-8bf9-3888-9912-ace4e6543002')
+
+        Implementation (Phase 3):
+            - Iterate over text_with_rows
+            - For each (text, row_num) tuple:
+                desc = HVACDescription.from_excel_row(
+                    raw_text=text,
+                    source_row_number=row_num,
+                    file_id=file_id
+                )
+            - Append to result list
+            - Return list
+            - Handle validation errors from HVACDescription (text too short, etc.)
+        """
+        raise NotImplementedError(
+            "_create_hvac_descriptions() to be implemented in Phase 3."
+        )
+
+    def _clear_cache(self) -> None:
+        """
+        Clear DataFrame cache to free memory.
+
+        Removes all cached DataFrames from memory.
+        Useful for cleanup after processing large files.
+
+        Examples:
+            >>> reader = ExcelReaderService()
+            >>> reader._load_excel_dataframe(Path("file1.xlsx"), None)
+            >>> reader._load_excel_dataframe(Path("file2.xlsx"), None)
+            >>> print(len(reader._dataframe_cache))  # 2
+            >>> reader._clear_cache()
+            >>> print(len(reader._dataframe_cache))  # 0
+
+        Implementation (Phase 3):
+            - Clear dict: self._dataframe_cache.clear()
+            - Log cache size before/after for debugging
+        """
+        self._dataframe_cache.clear()
 
     async def detect_description_column(self, file_path: Path) -> Optional[str]:
         """

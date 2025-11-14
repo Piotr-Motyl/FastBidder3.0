@@ -115,6 +115,66 @@ class HVACDescription:
         self._validate_text(self.raw_text)
         self.raw_text = self._normalize_text(self.raw_text)
 
+    @classmethod
+    def from_excel_row(
+        cls,
+        raw_text: str,
+        source_row_number: int,
+        file_id: UUID | None = None,
+    ) -> "HVACDescription":
+        """
+        Factory method to create HVACDescription from Excel row data.
+
+        Creates a new HVACDescription entity with metadata from Excel source.
+        This is the recommended way to create descriptions from Excel files
+        as it ensures proper metadata tracking.
+
+        Args:
+            raw_text: Description text from Excel cell
+            source_row_number: Excel row number (1-based notation)
+            file_id: UUID of source Excel file (optional)
+
+        Returns:
+            New HVACDescription entity with CREATED state
+
+        Raises:
+            InvalidHVACDescriptionError: If raw_text is invalid
+                - Empty or too short (< 3 characters)
+                - Not a string
+
+        Examples:
+            >>> from uuid import UUID
+            >>> desc = HVACDescription.from_excel_row(
+            ...     raw_text="Zawór kulowy DN50 PN16 mosiężny",
+            ...     source_row_number=5,
+            ...     file_id=UUID("a3bb189e-8bf9-3888-9912-ace4e6543002")
+            ... )
+            >>> print(desc.raw_text)
+            'Zawór kulowy DN50 PN16 mosiężny'
+            >>> print(desc.source_row_number)
+            5
+            >>> print(desc.state)
+            <HVACDescriptionState.CREATED: 'created'>
+
+        Usage Pattern:
+            This factory method is used by ExcelReaderService:
+            >>> # In ExcelReaderService._create_hvac_descriptions()
+            >>> descriptions = [
+            ...     HVACDescription.from_excel_row(text, row_num, file_id)
+            ...     for text, row_num in text_with_rows
+            ... ]
+
+        Architecture Note:
+            Factory method pattern separates construction logic from entity.
+            This allows Infrastructure Layer to create entities without knowing
+            internal initialization details. Follows Clean Architecture principles.
+        """
+        return cls(
+            raw_text=raw_text,
+            source_row_number=source_row_number,
+            file_id=file_id,
+        )
+
     def _validate_text(self, text: str) -> None:
         """
         Validate raw_text meets business rules.

@@ -174,3 +174,233 @@ class InvalidHVACDescriptionError(DomainException):
         """
         self.field_name = field_name
         super().__init__(message)
+
+
+class InvalidProcessMatchingCommandError(DomainException):
+    """
+    Raised when ProcessMatchingCommand validation fails.
+
+    This exception is raised when command validation detects business rule violations:
+    - Same file_id used for working and reference files
+    - Invalid column format (not A-ZZ range)
+    - Invalid row ranges (start >= end, or exceeds max limit)
+    - Negative or zero threshold value
+    - Missing required configuration fields
+
+    This exception can contain multiple validation errors to provide
+    comprehensive feedback to the user.
+
+    Attributes:
+        errors: List of validation error messages (for multiple validation failures)
+
+    Examples:
+        >>> raise InvalidProcessMatchingCommandError("working_file.file_id cannot equal reference_file.file_id")
+
+        >>> # Multiple errors
+        >>> errors = [
+        ...     "Invalid column 'AAA': must be in range A-ZZ",
+        ...     "Invalid range: start_row (10) must be less than end_row (5)"
+        ... ]
+        >>> raise InvalidProcessMatchingCommandError("Multiple validation errors", errors=errors)
+
+    Phase 2 Note:
+        Used by ProcessMatchingCommand.validate_business_rules() to report
+        all validation errors at once (better UX than fail-fast approach).
+    """
+
+    def __init__(self, message: str, errors: list[str] | None = None) -> None:
+        """
+        Initialize command validation error.
+
+        Args:
+            message: Primary error message
+            errors: Optional list of specific validation errors
+        """
+        self.errors = errors or []
+        if self.errors:
+            # Build comprehensive message from all errors
+            detailed_message = f"{message}:\n" + "\n".join(f"  - {err}" for err in self.errors)
+            super().__init__(detailed_message)
+        else:
+            super().__init__(message)
+
+    def add_error(self, error: str) -> None:
+        """
+        Add validation error to the list.
+
+        Useful for collecting multiple validation errors before raising.
+
+        Args:
+            error: Validation error message to add
+        """
+        self.errors.append(error)
+
+    def has_errors(self) -> bool:
+        """
+        Check if any validation errors exist.
+
+        Returns:
+            True if there are validation errors, False otherwise
+        """
+        return len(self.errors) > 0
+
+
+class FileSizeExceededError(DomainException):
+    """
+    Raised when file size exceeds allowed limit.
+
+    This exception is raised when:
+    - Excel file size > MAX_FILE_SIZE_BYTES (10MB)
+    - File is too large for processing
+    - Memory constraints violated
+
+    Used by:
+    - ExcelReaderService._validate_file_size()
+    - FileStorageService validation
+
+    Attributes:
+        file_size_bytes: Actual file size in bytes
+        max_size_bytes: Maximum allowed size in bytes
+
+    Examples:
+        >>> raise FileSizeExceededError(
+        ...     "File size 15MB exceeds maximum 10MB",
+        ...     file_size_bytes=15 * 1024 * 1024,
+        ...     max_size_bytes=10 * 1024 * 1024
+        ... )
+    """
+
+    def __init__(
+        self,
+        message: str,
+        file_size_bytes: int | None = None,
+        max_size_bytes: int | None = None,
+    ) -> None:
+        """
+        Initialize file size exceeded error.
+
+        Args:
+            message: Error description
+            file_size_bytes: Actual file size in bytes (optional)
+            max_size_bytes: Maximum allowed size in bytes (optional)
+        """
+        self.file_size_bytes = file_size_bytes
+        self.max_size_bytes = max_size_bytes
+
+        # Build detailed message with human-readable sizes
+        if file_size_bytes and max_size_bytes:
+            file_mb = file_size_bytes / (1024 * 1024)
+            max_mb = max_size_bytes / (1024 * 1024)
+            detailed_message = (
+                f"{message} "
+                f"(File: {file_mb:.2f}MB, Max: {max_mb:.2f}MB)"
+            )
+            super().__init__(detailed_message)
+        else:
+            super().__init__(message)
+
+
+class ExcelParsingError(DomainException):
+    """
+    Raised when Excel file cannot be parsed.
+
+    This exception is raised when:
+    - Excel file has invalid format
+    - Polars cannot read the file
+    - Encoding issues (after UTF-8 and CP1250 fallback)
+    - Corrupted Excel file
+    - Unsupported Excel version
+
+    Used by:
+    - ExcelReaderService._load_excel_dataframe()
+
+    Attributes:
+        file_path: Path to Excel file that failed parsing (optional)
+        original_error: Original exception from Polars (optional)
+
+    Examples:
+        >>> raise ExcelParsingError(
+        ...     "Cannot parse Excel file: invalid format",
+        ...     file_path="working_file.xlsx",
+        ...     original_error=PolarsError("...")
+        ... )
+    """
+
+    def __init__(
+        self,
+        message: str,
+        file_path: str | None = None,
+        original_error: Exception | None = None,
+    ) -> None:
+        """
+        Initialize Excel parsing error.
+
+        Args:
+            message: Error description
+            file_path: Path to file that failed (optional)
+            original_error: Original exception from Polars (optional)
+        """
+        self.file_path = file_path
+        self.original_error = original_error
+
+        # Build detailed message with file path and original error
+        detailed_parts = [message]
+        if file_path:
+            detailed_parts.append(f"File: {file_path}")
+        if original_error:
+            detailed_parts.append(f"Original error: {type(original_error).__name__}: {original_error}")
+
+        detailed_message = " | ".join(detailed_parts)
+        super().__init__(detailed_message)
+
+
+class ColumnNotFoundError(DomainException):
+    """
+    Raised when specified column doesn't exist in Excel DataFrame.
+
+    This exception is raised when:
+    - Specified column letter (e.g., "Z") doesn't exist in file
+    - Column index out of bounds
+    - Excel has fewer columns than expected
+
+    Used by:
+    - ExcelReaderService._validate_column_exists()
+
+    Attributes:
+        column: Column letter that was not found (e.g., "Z")
+        available_columns: List of available column names in DataFrame (optional)
+
+    Examples:
+        >>> raise ColumnNotFoundError(
+        ...     "Column 'Z' not found in Excel file",
+        ...     column="Z",
+        ...     available_columns=["A", "B", "C", "D", "E"]
+        ... )
+    """
+
+    def __init__(
+        self,
+        message: str,
+        column: str | None = None,
+        available_columns: list[str] | None = None,
+    ) -> None:
+        """
+        Initialize column not found error.
+
+        Args:
+            message: Error description
+            column: Column letter that was not found (optional)
+            available_columns: List of available columns (optional)
+        """
+        self.column = column
+        self.available_columns = available_columns
+
+        # Build detailed message with available columns
+        detailed_parts = [message]
+        if column:
+            detailed_parts.append(f"Requested column: '{column}'")
+        if available_columns:
+            detailed_parts.append(f"Available columns: {', '.join(available_columns)}")
+
+        detailed_message = " | ".join(detailed_parts)
+        super().__init__(detailed_message)

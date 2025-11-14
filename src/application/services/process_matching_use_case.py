@@ -48,20 +48,48 @@ class FileStorageServiceProtocol(Protocol):
     This follows Dependency Inversion Principle from SOLID.
 
     Methods:
-        file_exists: Check if file exists
-        get_file_metadata: Get file metadata (size, format, etc.)
+        file_exists: Check if specific file exists in job storage
+        get_file_metadata: Get file metadata (size, format, timestamps)
+
+    Storage Structure (Phase 2):
+        Files are organized by job_id and file_type:
+        - {job_id}/input/working_file.xlsx
+        - {job_id}/input/reference_file.xlsx
+        - {job_id}/output/result.xlsx
 
     Note:
-        Actual implementation will be in Infrastructure Layer:
-        src/infrastructure/file_storage/storage_service.py
+        Actual implementation in Infrastructure Layer:
+        src/infrastructure/file_storage/file_storage_service.py
+
+        Phase 2 Update:
+        Changed from file_id to (job_id, file_type) for better architecture.
+        Aligns with storage structure {job_id}/{input|output}/.
     """
 
-    async def file_exists(self, file_id: UUID) -> bool:
-        """Check if file exists in storage."""
+    async def file_exists(self, job_id: UUID, file_type: str) -> bool:
+        """
+        Check if specific file exists in job storage.
+
+        Args:
+            job_id: UUID of the job
+            file_type: Type of file ("working", "reference", "result")
+
+        Returns:
+            True if file exists, False otherwise
+        """
         ...
 
-    async def get_file_metadata(self, file_id: UUID) -> dict:
-        """Get file metadata (size, format, etc.)."""
+    async def get_file_metadata(self, job_id: UUID, file_type: str) -> dict:
+        """
+        Get file metadata (size, format, timestamps).
+
+        Args:
+            job_id: UUID of the job
+            file_type: Type of file ("working", "reference", "result")
+
+        Returns:
+            Dict with metadata (size, format, created_at, modified_at, etc.)
+        """
         ...
 
 
@@ -251,24 +279,33 @@ class ProcessMatchingUseCase:
         # CONTRACT ONLY - Implementation in Phase 3
         #
         # Implementation will:
-        # 1. Validate business rules (if file_storage available):
+        # 1. Validate command business rules:
+        #    command.validate_business_rules()
+        #
+        # 2. Validate files exist (if file_storage available):
         #    if self.file_storage:
         #        await self._validate_files(command)
         #
-        # 2. Estimate processing time (simple heuristic):
+        # 3. Estimate processing time (simple heuristic):
         #    estimated_time = await self._estimate_processing_time(
-        #        command.wf_file_id, command.ref_file_id
+        #        UUID(command.working_file.file_id),
+        #        UUID(command.reference_file.file_id)
         #    )
         #
-        # 3. Trigger Celery task:
+        # 4. Trigger Celery task with full command data:
         #    from src.application.tasks.matching_tasks import process_matching_task
-        #    task_result = process_matching_task.delay(
-        #        wf_file_id=str(command.wf_file_id),
-        #        ref_file_id=str(command.ref_file_id),
-        #        threshold=command.threshold
-        #    )
+        #    celery_data = command.to_celery_dict()
+        #    task_result = process_matching_task.delay(**celery_data)
+        #    # OR explicitly:
+        #    # task_result = process_matching_task.delay(
+        #    #     working_file=celery_data['working_file'],
+        #    #     reference_file=celery_data['reference_file'],
+        #    #     matching_threshold=celery_data['matching_threshold'],
+        #    #     matching_strategy=celery_data['matching_strategy'],
+        #    #     report_format=celery_data['report_format']
+        #    # )
         #
-        # 4. Create and return result:
+        # 5. Create and return result:
         #    return ProcessMatchingResult(
         #        job_id=UUID(task_result.id),
         #        status=JobStatus.QUEUED,

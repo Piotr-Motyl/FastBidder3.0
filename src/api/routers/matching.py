@@ -82,6 +82,10 @@ class ProcessMatchingRequest(BaseModel):
         - ranges must be valid (start < end)
         - columns must exist in files
         - threshold > 0 for meaningful results
+
+    Phase 2 Extensions:
+        - matching_strategy: Strategy for handling multiple matches
+        - report_format: Format of matching report in Excel
     """
 
     working_file: WorkingFileConfig
@@ -91,6 +95,14 @@ class ProcessMatchingRequest(BaseModel):
         ge=1.0,
         le=100.0,
         description="Similarity threshold percentage. Matches below this value will be ignored.",
+    )
+    matching_strategy: Optional[str] = Field(
+        default="best_match",
+        description="Strategy for multiple matches: 'first_match', 'best_match', 'all_matches'",
+    )
+    report_format: Optional[str] = Field(
+        default="simple",
+        description="Report format: 'simple', 'detailed', 'debug'",
     )
 
     class Config:
@@ -110,6 +122,8 @@ class ProcessMatchingRequest(BaseModel):
                     "price_source_column": "D",
                 },
                 "matching_threshold": 80.0,
+                "matching_strategy": "best_match",
+                "report_format": "simple",
             }
         }
 
