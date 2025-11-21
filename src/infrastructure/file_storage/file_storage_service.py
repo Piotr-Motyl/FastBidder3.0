@@ -52,8 +52,14 @@ class FileStorageService:
 
     Storage Structure (Phase 2):
         Base directory: /tmp/fastbidder/ (from env: TEMP_DIR)
-        Job structure: /tmp/fastbidder/{job_id}/input/
-                      /tmp/fastbidder/{job_id}/output/
+
+        Upload storage (before job processing):
+            /tmp/fastbidder/uploads/{file_id}/{original_filename}
+
+        Job structure (during job processing):
+            /tmp/fastbidder/{job_id}/input/
+            /tmp/fastbidder/{job_id}/output/
+
         Input files: /tmp/fastbidder/{job_id}/input/working_file.xlsx
                     /tmp/fastbidder/{job_id}/input/reference_file.xlsx
         Output files: /tmp/fastbidder/{job_id}/output/result.xlsx
@@ -622,6 +628,395 @@ class FileStorageService:
         raise NotImplementedError(
             "cleanup_old_jobs() to be implemented in Phase 3. "
             "Will scan job directories and delete those older than threshold."
+        )
+
+    # ========================================
+    # Upload Endpoint Methods (Phase 2 - Task 2.4.1)
+    # ========================================
+
+    async def save_uploaded_file(
+        self, file_id: UUID, file_data: bytes, filename: str
+    ) -> Path:
+        """
+        Save uploaded file to temporary upload storage (Phase 2 - Task 2.4.1).
+
+        This method handles file upload to temporary storage location separate from
+        job processing directories. Files are stored in /tmp/fastbidder/uploads/{file_id}/
+        until they are copied to job directory during processing.
+
+        Process Flow:
+        1. Validate file extension using _validate_extension(filename)
+        2. Validate file size using _validate_size(file_data)
+        3. Construct upload directory: {base_dir}/uploads/{file_id}/
+        4. Ensure upload directory exists using _ensure_directory_exists()
+        5. Construct file path: {upload_dir}/{original_filename}
+        6. Write file data to disk (direct write, not atomic for uploads)
+        7. Set file permissions using _set_permissions() (644)
+        8. Log successful upload (INFO level)
+        9. Return full file path
+
+        Args:
+            file_id: Unique identifier for uploaded file (UUID)
+            file_data: Raw file bytes from multipart upload
+            filename: Original filename from user (preserved in storage)
+
+        Returns:
+            Path to saved file (absolute path)
+
+        Raises:
+            ValueError: If extension is not .xlsx/.xls
+            FileSizeExceededError: If file_data size > max_size_bytes (10MB)
+            OSError: If file cannot be written to disk
+
+        Examples:
+            >>> service = FileStorageService()
+            >>> file_id = UUID("a3bb189e-8bf9-3888-9912-ace4e6543002")
+            >>> with open("catalog.xlsx", "rb") as f:
+            ...     data = f.read()
+            >>> path = await service.save_uploaded_file(
+            ...     file_id=file_id,
+            ...     file_data=data,
+            ...     filename="my_price_catalog_2024.xlsx"
+            ... )
+            >>> print(path)
+            /tmp/fastbidder/uploads/a3bb189e-8bf9-3888-9912-ace4e6543002/my_price_catalog_2024.xlsx
+
+        Implementation Note (Phase 3):
+            - Validation:
+                * if not _validate_extension(filename):
+                    raise ValueError(f"Invalid extension: {filename}. Allowed: {allowed_extensions}")
+                * if not _validate_size(file_data):
+                    raise FileSizeExceededError(
+                        f"File size {len(file_data)} exceeds limit {max_size_bytes}"
+                    )
+            - Path construction:
+                * upload_dir = base_dir / "uploads" / str(file_id)
+                * file_path = upload_dir / filename  # Preserve original filename
+            - Directory creation:
+                * _ensure_directory_exists(upload_dir)
+            - File write:
+                * file_path.write_bytes(file_data)  # Direct write for uploads
+            - Permissions:
+                * _set_permissions(file_path, mode=0o644)  # rw-r--r--
+            - Logging:
+                * logger.info(
+                    f"Saved uploaded file: {filename} ({len(file_data)} bytes) "
+                    f"to uploads/{file_id}/"
+                )
+
+        Architecture Note:
+            - Upload storage is TEMPORARY and separate from job storage
+            - When processing starts, files will be copied from uploads/{file_id}/ to {job_id}/input/
+            - Original filename is preserved in upload storage (unlike job storage which uses standardized names)
+            - Cleanup: uploaded files should be deleted after successful copy to job directory
+
+        Phase 2 Contract:
+            This method defines the interface contract with detailed documentation.
+            Actual implementation will be added in Phase 3.
+        """
+        raise NotImplementedError(
+            "save_uploaded_file() to be implemented in Phase 3. "
+            "Will validate and save file to /tmp/fastbidder/uploads/{file_id}/ directory."
+        )
+
+    async def extract_file_metadata(self, file_path: Path) -> dict:
+        """
+        Extract metadata from Excel file (Phase 2 - Task 2.4.1).
+
+        Reads Excel file structure and extracts metadata without loading full data.
+        Uses polars for fast Excel reading (10x faster than pandas for metadata).
+
+        Process Flow:
+        1. Validate file exists at file_path
+        2. Get file stats using Path.stat() (size, timestamps)
+        3. Open Excel file using polars.read_excel() with minimal data load
+        4. Extract sheet names from Excel structure
+        5. For first sheet only: extract rows_count and columns_count
+        6. Calculate file size in MB
+        7. Return metadata dictionary
+        8. Log metadata extraction (DEBUG level)
+
+        Args:
+            file_path: Path to Excel file to analyze
+
+        Returns:
+            Dict with file metadata:
+            {
+                'filename': 'catalog.xlsx',         # Original filename (str)
+                'size': 1024000,                    # Size in bytes (int)
+                'size_mb': 1.02,                    # Size in MB (float, 2 decimals)
+                'sheets_count': 3,                  # Number of sheets (int)
+                'rows_count': 150,                  # Rows in first sheet (int)
+                'columns_count': 8,                 # Columns in first sheet (int)
+                'created_at': '2024-01-15T10:30:00' # File creation timestamp (ISO format)
+            }
+
+        Raises:
+            FileNotFoundError: If file does not exist at file_path
+            ExcelParsingError: If file cannot be opened or parsed as Excel
+            ValueError: If file is empty or has no sheets
+
+        Examples:
+            >>> service = FileStorageService()
+            >>> file_path = Path("/tmp/fastbidder/uploads/.../catalog.xlsx")
+            >>> metadata = await service.extract_file_metadata(file_path)
+            >>> print(f"File: {metadata['filename']}")
+            >>> print(f"Size: {metadata['size_mb']:.2f} MB")
+            >>> print(f"Sheets: {metadata['sheets_count']}")
+            >>> print(f"First sheet: {metadata['rows_count']} rows x {metadata['columns_count']} cols")
+
+        Implementation Note (Phase 3):
+            - File validation:
+                * if not file_path.exists():
+                    raise FileNotFoundError(f"File not found: {file_path}")
+            - File stats:
+                * stat_result = file_path.stat()
+                * size = stat_result.st_size
+                * size_mb = round(size / (1024 * 1024), 2)
+                * created_at = datetime.fromtimestamp(stat_result.st_ctime).isoformat()
+            - Excel metadata extraction using polars:
+                * import polars as pl
+                * try:
+                    # Read only first row to get structure (fast)
+                    df = pl.read_excel(file_path, sheet_id=0, read_csv_options={"n_rows": 1})
+                    columns_count = len(df.columns)
+
+                    # Get full row count (polars is fast even with large files)
+                    df_full = pl.read_excel(file_path, sheet_id=0)
+                    rows_count = len(df_full)
+
+                    # Get sheet names (polars doesn't expose this easily, may need openpyxl)
+                    from openpyxl import load_workbook
+                    wb = load_workbook(file_path, read_only=True, data_only=True)
+                    sheets_count = len(wb.sheetnames)
+                    wb.close()
+                except Exception as e:
+                    raise ExcelParsingError(f"Failed to parse Excel file: {e}")
+            - Validation:
+                * if sheets_count == 0:
+                    raise ValueError("Excel file has no sheets")
+            - Logging:
+                * logger.debug(
+                    f"Extracted metadata: {filename} - {sheets_count} sheets, "
+                    f"{rows_count}x{columns_count}, {size_mb:.2f}MB"
+                )
+
+        Performance Note:
+            - polars is 10x faster than pandas for large Excel files
+            - Reading only first row for structure is very fast
+            - Sheet count requires openpyxl (polars doesn't expose sheet names easily)
+
+        Phase 2 Contract:
+            This method defines the interface contract with detailed documentation.
+            Actual implementation will be added in Phase 3.
+        """
+        raise NotImplementedError(
+            "extract_file_metadata() to be implemented in Phase 3. "
+            "Will use polars and openpyxl to extract Excel metadata (sheets, rows, columns, size)."
+        )
+
+    async def extract_file_preview(
+        self, file_path: Path, rows: int = 5
+    ) -> list[dict]:
+        """
+        Extract preview of first N rows from Excel file (Phase 2 - Task 2.4.1).
+
+        Reads only the first N rows from the first sheet and converts to JSON-serializable
+        format for API response. Uses polars for fast Excel reading.
+
+        Process Flow:
+        1. Validate file exists at file_path
+        2. Open Excel file using polars.read_excel() with n_rows limit
+        3. Read only first sheet (sheet_id=0)
+        4. Read only first N rows (default 5)
+        5. Convert DataFrame to list of dicts (each row = dict)
+        6. Handle None/NaN values (convert to null for JSON)
+        7. Return list of dicts
+        8. Log preview extraction (DEBUG level)
+
+        Args:
+            file_path: Path to Excel file to preview
+            rows: Number of rows to extract (default 5)
+
+        Returns:
+            List of dictionaries, where each dict represents one row:
+            [
+                {'Column1': 'Value1', 'Column2': 123, 'Column3': None},
+                {'Column1': 'Value2', 'Column2': 456, 'Column3': 'ABC'},
+                ...
+            ]
+            Returns empty list if file has no data rows (only headers).
+
+        Raises:
+            FileNotFoundError: If file does not exist at file_path
+            ExcelParsingError: If file cannot be opened or parsed as Excel
+
+        Examples:
+            >>> service = FileStorageService()
+            >>> file_path = Path("/tmp/fastbidder/uploads/.../catalog.xlsx")
+            >>> preview = await service.extract_file_preview(file_path, rows=5)
+            >>> print(f"Preview of first {len(preview)} rows:")
+            >>> for row in preview:
+            ...     print(row)
+            {'Description': 'Zawór DN50', 'Price': 123.45, 'Quantity': 10}
+            {'Description': 'Rura DN100', 'Price': 234.56, 'Quantity': 5}
+
+            >>> # Preview with default 5 rows
+            >>> preview = await service.extract_file_preview(file_path)
+
+        Implementation Note (Phase 3):
+            - File validation:
+                * if not file_path.exists():
+                    raise FileNotFoundError(f"File not found: {file_path}")
+            - Excel reading with polars:
+                * import polars as pl
+                * try:
+                    # Read first sheet, first N rows
+                    df = pl.read_excel(
+                        file_path,
+                        sheet_id=0,              # First sheet only
+                        read_csv_options={"n_rows": rows}  # Limit rows
+                    )
+                except Exception as e:
+                    raise ExcelParsingError(f"Failed to read Excel file: {e}")
+            - Convert to list of dicts:
+                * preview = df.to_dicts()  # polars method
+                * Returns list[dict] directly
+            - Handle NaN/None:
+                * polars already converts NaN to None
+                * None serializes to null in JSON (Pydantic handles this)
+            - Empty file handling:
+                * if len(df) == 0:
+                    return []  # No data rows
+            - Logging:
+                * logger.debug(f"Extracted preview: {len(preview)} rows from {file_path.name}")
+
+        Performance Note:
+            - polars reads only requested rows (very fast for previews)
+            - No need to load entire file into memory
+            - Typical preview (5 rows) takes <100ms even for large files
+
+        Phase 2 Contract:
+            This method defines the interface contract with detailed documentation.
+            Actual implementation will be added in Phase 3.
+        """
+        raise NotImplementedError(
+            "extract_file_preview() to be implemented in Phase 3. "
+            "Will use polars to read first N rows from Excel and convert to list of dicts."
+        )
+
+    # ========================================
+    # Result File Methods (Phase 2 - Task 2.4.4)
+    # ========================================
+
+    def get_result_file_path(self, job_id: UUID) -> Path:
+        """
+        Get path to result file for completed job (Phase 2 - Task 2.4.4).
+
+        Returns path to result Excel file in output directory.
+        Used by download endpoint to locate result file.
+
+        Storage Structure:
+            /tmp/fastbidder/{job_id}/output/result.xlsx
+
+        Process Flow:
+            1. Convert job_id UUID to string
+            2. Construct base directory: {base_dir}/{job_id}/
+            3. Construct output directory: {job_base}/output/
+            4. Construct file path: {output_dir}/result.xlsx
+            5. Return Path object (does NOT check if file exists)
+
+        Args:
+            job_id: UUID of the job
+
+        Returns:
+            Path to result file (may or may not exist on filesystem)
+
+        Note:
+            This method does NOT validate file existence.
+            Use result_file_exists() to check before reading.
+
+        Examples:
+            >>> service = FileStorageService()
+            >>> job_id = UUID("3fa85f64-5717-4562-b3fc-2c963f66afa6")
+            >>> path = service.get_result_file_path(job_id)
+            >>> print(path)
+            /tmp/fastbidder/3fa85f64-5717-4562-b3fc-2c963f66afa6/output/result.xlsx
+
+            >>> # Check if exists before reading
+            >>> if path.exists():
+            ...     data = path.read_bytes()
+
+        Implementation Note (Phase 3):
+            job_id_str = str(job_id)
+            job_dir = self.base_dir / job_id_str
+            output_dir = job_dir / "output"
+            result_path = output_dir / "result.xlsx"
+
+            logger.debug(f"Result file path for job {job_id_str}: {result_path}")
+            return result_path
+
+        Phase 2 Contract:
+            This method defines the interface contract with detailed documentation.
+            Actual implementation will be added in Phase 3.
+        """
+        raise NotImplementedError(
+            "get_result_file_path() to be implemented in Phase 3. "
+            "Will return Path to {job_id}/output/result.xlsx."
+        )
+
+    def result_file_exists(self, job_id: UUID) -> bool:
+        """
+        Check if result file exists for job (Phase 2 - Task 2.4.4).
+
+        Quick existence check without raising exceptions.
+        Used by download endpoint for defensive validation.
+
+        Process Flow:
+            1. Get result file path using get_result_file_path(job_id)
+            2. Check if file exists using Path.exists()
+            3. Return boolean result
+            4. Log existence check (DEBUG level)
+
+        Args:
+            job_id: UUID of the job
+
+        Returns:
+            True if result file exists, False otherwise
+
+        Examples:
+            >>> service = FileStorageService()
+            >>> job_id = UUID("3fa85f64-5717-4562-b3fc-2c963f66afa6")
+            >>> if service.result_file_exists(job_id):
+            ...     path = service.get_result_file_path(job_id)
+            ...     # Read file safely
+            ... else:
+            ...     print("Result file not found")
+
+            >>> # Defensive check in download endpoint
+            >>> exists = service.result_file_exists(job_id)
+            >>> if not exists:
+            ...     raise HTTPException(status_code=404, detail="Result file not found")
+
+        Implementation Note (Phase 3):
+            result_path = self.get_result_file_path(job_id)
+            exists = result_path.exists()
+
+            logger.debug(f"Result file exists check for job {job_id}: {exists}")
+            return exists
+
+        Architecture Note:
+            This is a convenience method to avoid exception handling
+            when we only need a boolean check. More ergonomic than
+            try/except FileNotFoundError pattern.
+
+        Phase 2 Contract:
+            This method defines the interface contract with detailed documentation.
+            Actual implementation will be added in Phase 3.
+        """
+        raise NotImplementedError(
+            "result_file_exists() to be implemented in Phase 3. "
+            "Will check if {job_id}/output/result.xlsx exists."
         )
 
     # ========================================

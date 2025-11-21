@@ -202,7 +202,8 @@ async def get_job_status_query_handler():
     description=(
         "Retrieves current status and progress of an asynchronous job. "
         "Client should poll this endpoint every 2-5 seconds during processing. "
-        "Works for any async job (matching, upload, embedding generation, etc.)."
+        "Works for any async job (matching, upload, embedding generation, etc.). "
+        "Response includes Cache-Control: no-cache for real-time updates."
     ),
     responses={
         200: {
@@ -217,14 +218,21 @@ async def get_job_status_query_handler():
             "description": "Unprocessable Entity - Invalid job ID format",
             "model": ErrorResponse,
         },
+        500: {
+            "description": "Internal Server Error - Redis connection failure",
+            "model": ErrorResponse,
+        },
     },
 )
 async def get_job_status(
-    job_id: UUID = Path(...),
+    job_id: UUID = Path(..., description="Celery task ID returned from async endpoint"),
     handler: GetJobStatusQueryHandler = Depends(get_job_status_query_handler),
 ) -> JobStatusResponse:
     """
-    Get current status and progress of asynchronous job.
+    Get current status and progress of asynchronous job (Phase 2 - Detailed Contract).
+
+    This endpoint is a thin wrapper around Application Layer query handler.
+    All business logic is delegated to GetJobStatusQueryHandler following Clean Architecture.
 
     CRITICAL FIX:
         Parameter renamed from 'query' to 'handler' to reflect correct architecture.
@@ -233,93 +241,237 @@ async def get_job_status(
     This endpoint queries Redis for job status and progress information.
     Used by frontend to display real-time progress during matching process.
 
-    **Process Flow:**
-    1. Validate job_id format (UUID)
-    2. Create GetJobStatusQuery with job_id
-    3. Delegate to Application Layer handler (GetJobStatusQueryHandler)
-    4. Handler retrieves status from Redis (via RedisProgressTracker)
-    5. Convert JobStatusResult to JobStatusResponse
-    6. Return formatted status response
-
-    **Status Lifecycle:**
-    - queued: Job accepted, waiting in Celery queue
-    - processing: Job being executed, progress 0-100%
-    - completed: Job finished, results available for download
-    - failed: Job failed, error details available
-    - cancelled: Job cancelled by user or system timeout
-
-    **Progress Tracking:**
-    - Progress updates written to Redis by Celery worker every 10%
-    - TTL: 1 hour for progress data (active jobs)
-    - TTL: 24 hours for completed job metadata (history)
-    - Key pattern: `job:{job_id}:status`
+    Process Flow (10 steps):
+        1. Receive job_id from URL path parameter (FastAPI validates UUID format)
+        2. Create GetJobStatusQuery object with job_id
+        3. Delegate to handler.handle(query) in Application Layer
+        4. Handler calls RedisProgressTracker.get_status(job_id) in Infrastructure Layer
+        5. Handler converts Redis progress_data to JobStatusResult DTO
+        6. Convert JobStatusResult to JobStatusResponse (API Layer model)
+        7. Set Cache-Control: no-cache header for real-time updates
+        8. Return HTTP 200 OK with JobStatusResponse
+        9. Handle JobNotFoundException → HTTP 404 Not Found
+        10. Handle unexpected errors → HTTP 500 Internal Server Error
 
     Args:
-        job_id: UUID of the Celery task from async endpoint
+        job_id: UUID of the Celery task from async endpoint (e.g., from POST /matching/process)
         handler: Injected GetJobStatusQueryHandler from Application Layer
 
     Returns:
         JobStatusResponse: HTTP response with job status and progress
 
     Raises:
-        HTTPException 404: If job_id not found in Redis
-        HTTPException 422: If job_id is not a valid UUID
-        HTTPException 500: If Redis connection fails
+        HTTPException 404: If job_id not found in Redis (expired or never existed)
+        HTTPException 422: If job_id is not a valid UUID format (handled by FastAPI automatically)
+        HTTPException 500: If Redis connection fails or unexpected error
 
-    Example:
-        >>> response = await client.get(
-        ...     "/api/jobs/3fa85f64-5717-4562-b3fc-2c963f66afa6/status"
-        ... )
-        >>> print(response.json())
-        {
-            "job_id": "3fa85f64...",
-            "status": "processing",
-            "progress": 45,
-            ...
-        }
+    Status Lifecycle:
+        - QUEUED: Job accepted and waiting in Celery queue (progress=0%)
+        - PROCESSING: Job being executed by Celery worker (progress=1-99%)
+        - COMPLETED: Job finished successfully, results available for download (progress=100%)
+        - FAILED: Job failed with error details available in error_details field
+        - CANCELLED: Job cancelled by user or system timeout
+
+    Progress Tracking:
+        - Progress updates written to Redis by Celery worker every 10% or 100 records (whichever first)
+        - TTL: 1 hour (3600s) for active progress data
+        - TTL: 24 hours (86400s) for completed job metadata
+        - Key pattern: "progress:{job_id}"
+        - Heartbeat: Updated every 30s to show task is alive
+
+    Polling Recommendations:
+        - Poll every 2-5 seconds during PROCESSING status
+        - Stop polling when status is COMPLETED, FAILED, or CANCELLED
+        - Use exponential backoff for long-running jobs (2s → 5s → 10s)
+        - Set max polling timeout (e.g., 5 minutes for UI responsiveness)
+
+    Error Handling (Phase 2 - Minimal):
+        JobNotFoundException → 404 Not Found (job expired or never existed)
+        ValueError → 500 Internal Server Error (invalid status value from Redis)
+        Exception → 500 Internal Server Error (catch-all for unexpected errors)
 
     Architecture Note:
-        This endpoint is read-only (CQRS Query pattern).
-        Delegates to Application Layer GetJobStatusQueryHandler.
-        No direct Redis access - follows dependency inversion principle.
-    """
-    # CONTRACT ONLY - Implementation in Phase 3
-    #
-    # Implementation will:
-    # 1. Create query object from path parameter
-    # 2. Call handler.handle(query)
-    # 3. Convert JobStatusResult to JobStatusResponse
-    # 4. Return response
-    #
-    # Example implementation:
-    # from src.application.queries import GetJobStatusQuery
-    #
-    # try:
-    #     query = GetJobStatusQuery(job_id=job_id)
-    #     result = await handler.handle(query)
-    #
-    #     # Convert Application Layer DTO to API Layer Response
-    #     return JobStatusResponse(
-    #         job_id=result.job_id,
-    #         status=result.status,
-    #         progress=result.progress,
-    #         message=result.message,
-    #         result_ready=result.result_ready,
-    #         current_step=result.current_step,
-    #         error_details=result.error_details,
-    #         created_at=result.created_at,
-    #         updated_at=result.updated_at
-    #     )
-    # except JobNotFoundException:
-    #     raise HTTPException(
-    #         status_code=404,
-    #         detail=ErrorResponse(
-    #             code="JOB_NOT_FOUND",
-    #             message=f"Job with ID {job_id} not found or expired"
-    #         ).dict()
-    #     )
+        - API Layer responsibility: HTTP concerns only (status codes, error mapping, response headers)
+        - Application Layer responsibility: Business logic (query handling, data conversion)
+        - Infrastructure Layer responsibility: Redis operations (data retrieval)
+        - No direct Redis access - follows dependency inversion principle
+        - Read-only operation (CQRS Query pattern)
 
+    Phase 3+ Extensions (NOT in Phase 2):
+        - WebSocket alternative: GET /api/jobs/{job_id}/stream for real-time push updates
+        - Long polling: Support ?wait=30 query parameter to wait up to 30s for status change
+        - Rate limiting: Max 60 requests per minute per job_id (prevent polling abuse)
+        - Cache-Control header: Set programmatically with Response object
+        - Progress history: Include last 10 progress updates in response for debugging
+        - Partial results: If FAILED, include how much was processed before error
+        - Stack trace: Include full error stack trace only in DEBUG mode
+        - ETA calculation: Show estimated time remaining based on current progress rate
+
+    Examples:
+        >>> # Example 1: Job in QUEUED status (just started)
+        >>> curl -X GET "http://localhost:8000/api/jobs/3fa85f64-5717-4562-b3fc-2c963f66afa6/status"
+        {
+          "job_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+          "status": "queued",
+          "progress": 0,
+          "message": "Job queued, waiting for worker",
+          "result_ready": false,
+          "current_step": "START",
+          "error_details": null,
+          "created_at": null,
+          "updated_at": "2025-01-11T10:30:00.000Z"
+        }
+
+        >>> # Example 2: Job in PROCESSING status (45% complete)
+        >>> curl -X GET "http://localhost:8000/api/jobs/abc-123-def-456/status"
+        {
+          "job_id": "abc-123-def-456",
+          "status": "processing",
+          "progress": 45,
+          "message": "Matching descriptions (450/1000)",
+          "result_ready": false,
+          "current_step": "MATCHING",
+          "error_details": null,
+          "created_at": null,
+          "updated_at": "2025-01-11T10:32:15.500Z"
+        }
+
+        >>> # Example 3: Job in COMPLETED status (100% done)
+        >>> curl -X GET "http://localhost:8000/api/jobs/xyz-789-uvw-012/status"
+        {
+          "job_id": "xyz-789-uvw-012",
+          "status": "completed",
+          "progress": 100,
+          "message": "Matching completed successfully. 950 matches found.",
+          "result_ready": true,
+          "current_step": "COMPLETE",
+          "error_details": null,
+          "created_at": null,
+          "updated_at": "2025-01-11T10:35:00.123Z"
+        }
+
+        >>> # Example 4: Job in FAILED status (with errors)
+        >>> curl -X GET "http://localhost:8000/api/jobs/err-404-not-found/status"
+        {
+          "job_id": "err-404-not-found",
+          "status": "failed",
+          "progress": 30,
+          "message": "Job failed: File not found",
+          "result_ready": false,
+          "current_step": "FILES_LOADED",
+          "error_details": "File not found: working_file.xlsx\\nInvalid Excel format",
+          "created_at": null,
+          "updated_at": "2025-01-11T10:31:45.999Z"
+        }
+
+        >>> # Example 5: Using Python requests
+        >>> import requests
+        >>> import time
+        >>>
+        >>> job_id = "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+        >>> url = f"http://localhost:8000/api/jobs/{job_id}/status"
+        >>>
+        >>> # Poll until completed
+        >>> while True:
+        ...     response = requests.get(url)
+        ...     data = response.json()
+        ...
+        ...     print(f"Status: {data['status']}, Progress: {data['progress']}%, Step: {data['current_step']}")
+        ...
+        ...     if data['status'] in ['completed', 'failed', 'cancelled']:
+        ...         break
+        ...
+        ...     time.sleep(2)  # Poll every 2 seconds
+        Status: processing, Progress: 10%, Step: FILES_LOADED
+        Status: processing, Progress: 45%, Step: MATCHING
+        Status: processing, Progress: 90%, Step: SAVING_RESULTS
+        Status: completed, Progress: 100%, Step: COMPLETE
+
+        >>> # Example 6: Job not found (404 error)
+        >>> curl -X GET "http://localhost:8000/api/jobs/00000000-0000-0000-0000-000000000000/status"
+        {
+          "code": "JOB_NOT_FOUND",
+          "message": "Job with ID 00000000-0000-0000-0000-000000000000 not found or expired",
+          "details": {"job_id": "00000000-0000-0000-0000-000000000000"}
+        }
+
+    Implementation Note (Phase 3):
+        import logging
+        from src.application.queries.get_job_status import GetJobStatusQuery, JobNotFoundException
+
+        logger = logging.getLogger(__name__)
+
+        try:
+            # Step 2: Create query object from path parameter
+            query = GetJobStatusQuery(job_id=job_id)
+            logger.debug(f"Querying status for job: {job_id}")
+
+            # Step 3-5: Execute query handler
+            result = await handler.handle(query)
+            logger.info(f"Job {job_id} status retrieved: {result.status} ({result.progress}%)")
+
+            # Step 6: Convert Application Layer DTO to API Layer Response
+            response = JobStatusResponse(
+                job_id=result.job_id,
+                status=result.status,  # Already JobStatus enum value
+                progress=result.progress,
+                message=result.message,
+                result_ready=result.result_ready,
+                current_step=result.current_step,
+                error_details=result.error_details,
+                created_at=result.created_at,
+                updated_at=result.updated_at
+            )
+
+            # Step 7: Cache-Control header (Phase 3 - set via Response object)
+            # response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            # response.headers["Pragma"] = "no-cache"
+            # response.headers["Expires"] = "0"
+
+            # Step 8: Return response
+            return response
+
+        except JobNotFoundException as e:
+            # Step 9: Job not found → 404
+            logger.warning(f"Job not found: {job_id}")
+            raise HTTPException(
+                status_code=404,
+                detail=ErrorResponse(
+                    code="JOB_NOT_FOUND",
+                    message=f"Job with ID {job_id} not found or expired",
+                    details={"job_id": str(job_id)}
+                ).dict()
+            )
+
+        except ValueError as e:
+            # Invalid status value from Redis (shouldn't happen in happy path)
+            logger.error(f"Invalid status value for job {job_id}: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=ErrorResponse(
+                    code="INVALID_STATUS",
+                    message="Invalid job status value in storage",
+                    details={"job_id": str(job_id), "error": str(e)}
+                ).dict()
+            )
+
+        except Exception as e:
+            # Step 10: Unexpected error → 500
+            logger.error(f"Unexpected error retrieving job status for {job_id}: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=ErrorResponse(
+                    code="INTERNAL_SERVER_ERROR",
+                    message="An unexpected error occurred while retrieving job status",
+                    details={"job_id": str(job_id), "error": str(e)}
+                ).dict()
+            )
+
+    Phase 2 Contract:
+        This method defines the interface contract with detailed documentation.
+        Actual implementation will be added in Phase 3 - Task 3.4.1.
+    """
     raise NotImplementedError(
         "Implementation in Phase 3 - Task 3.4.1. "
-        "This is a contract only (Phase 1 - Task 1.1.1)."
+        "This is a detailed contract (Phase 2 - Task 2.4.3)."
     )

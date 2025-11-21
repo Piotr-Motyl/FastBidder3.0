@@ -103,14 +103,21 @@ class GetJobStatusQueryHandler:
 
     async def handle(self, query: GetJobStatusQuery) -> JobStatusResult:
         """
-        Retrieve job status from Redis.
+        Retrieve job status from Redis (Phase 2 - Detailed Contract).
 
-        Process:
-            1. Use job_id as Redis key
-            2. Fetch status data from Redis
-            3. Parse and validate data
-            4. Convert to JobStatusResult
-            5. Handle missing/expired jobs
+        Main handler method that orchestrates job status retrieval from Redis.
+        Delegates to RedisProgressTracker and converts infrastructure data to
+        Application Layer DTO.
+
+        Process Flow (8 steps):
+            1. Extract job_id from query object
+            2. Call progress_tracker.get_status(job_id) to fetch from Redis
+            3. Check if status data exists (raise JobNotFoundException if None)
+            4. Extract status string from progress_data and convert to JobStatus enum
+            5. Map Redis progress_data fields to JobStatusResult fields
+            6. Calculate result_ready flag (status == "completed")
+            7. Format error_details from errors list (join with newlines)
+            8. Return JobStatusResult with all mapped fields
 
         Args:
             query: GetJobStatusQuery with job_id
@@ -121,22 +128,131 @@ class GetJobStatusQueryHandler:
         Raises:
             JobNotFoundException: If job_id not found or expired (TTL exceeded)
 
-        Redis Key Format:
-            Key: f"job:{job_id}"
-            Value: JSON with status, progress, message, timestamps
-            TTL: 3600 seconds (1 hour) for progress
-                 86400 seconds (24 hours) for completed jobs
+        Redis Data Structure (from RedisProgressTracker.get_status()):
+            Key: "progress:{job_id}"
+            Value: JSON dict with structure:
+            {
+                "status": "processing",              # str: queued/processing/completed/failed/cancelled
+                "progress": 45,                      # int: 0-100
+                "message": "Matching descriptions",  # str: human-readable current step
+                "current_item": 450,                 # int: current record being processed
+                "total_items": 1000,                 # int: total records to process
+                "stage": "MATCHING",                 # str: stage name (START, MATCHING, etc.)
+                "eta_seconds": 120,                  # int: estimated time to completion
+                "memory_mb": 512.5,                  # float: memory usage
+                "errors": [],                        # list[str]: error messages
+                "last_heartbeat": "2025-01-11T10:30:45.123"  # str: ISO timestamp
+            }
 
-        CONTRACT ONLY - Implementation in Phase 3.
+        Field Mapping (Redis progress_data → JobStatusResult):
+            - job_id: query.job_id (from input, not from Redis)
+            - status: JobStatus(progress_data["status"])  # Convert string to enum
+            - progress: progress_data["progress"]  # Direct copy (0-100)
+            - message: progress_data["message"]  # Direct copy
+            - result_ready: (progress_data["status"] == "completed")  # Boolean flag
+            - current_step: progress_data["stage"]  # Stage name (e.g., "MATCHING")
+            - error_details: "\n".join(progress_data["errors"]) if errors else None
+            - created_at: None  # Phase 2: Not tracked yet, will be added in Phase 3
+            - updated_at: progress_data["last_heartbeat"]  # ISO timestamp string
+
+        TTL Configuration:
+            - Progress data: 3600 seconds (1 hour) - auto-expire after 1h
+            - Completed jobs: 86400 seconds (24 hours) - kept longer for history
+
+        Examples:
+            >>> # Processing job
+            >>> query = GetJobStatusQuery(job_id=UUID("3fa85f64-5717-4562-b3fc-2c963f66afa6"))
+            >>> result = await handler.handle(query)
+            >>> print(result.status)  # JobStatus.PROCESSING
+            >>> print(result.progress)  # 45
+            >>> print(result.current_step)  # "MATCHING"
+            >>> print(result.result_ready)  # False
+
+            >>> # Completed job
+            >>> query = GetJobStatusQuery(job_id=UUID("abc-123..."))
+            >>> result = await handler.handle(query)
+            >>> print(result.status)  # JobStatus.COMPLETED
+            >>> print(result.progress)  # 100
+            >>> print(result.result_ready)  # True
+
+            >>> # Failed job with errors
+            >>> query = GetJobStatusQuery(job_id=UUID("def-456..."))
+            >>> result = await handler.handle(query)
+            >>> print(result.status)  # JobStatus.FAILED
+            >>> print(result.error_details)  # "File not found: working.xlsx\nInvalid format"
+
+            >>> # Job not found (expired or never existed)
+            >>> query = GetJobStatusQuery(job_id=UUID("xyz-789..."))
+            >>> result = await handler.handle(query)  # Raises JobNotFoundException
+
+        Implementation Note (Phase 3):
+            import logging
+            from src.application.models import JobStatus
+
+            logger = logging.getLogger(__name__)
+
+            # Step 1: Extract job_id
+            job_id_str = str(query.job_id)
+            logger.debug(f"Retrieving status for job: {job_id_str}")
+
+            # Step 2: Fetch from Redis via progress_tracker
+            progress_data = self.progress_tracker.get_status(job_id_str)
+
+            # Step 3: Check if exists
+            if not progress_data:
+                logger.warning(f"Job not found in Redis: {job_id_str}")
+                raise JobNotFoundException(query.job_id)
+
+            logger.debug(f"Retrieved progress data: status={progress_data['status']}, progress={progress_data['progress']}%")
+
+            # Step 4: Convert status string to enum
+            try:
+                status_enum = JobStatus(progress_data["status"])
+            except ValueError as e:
+                logger.error(f"Invalid status value from Redis: {progress_data['status']}")
+                raise ValueError(f"Invalid status in Redis: {progress_data['status']}")
+
+            # Step 5-7: Map fields
+            result_ready = (progress_data["status"] == "completed")
+            error_details = None
+            if progress_data.get("errors"):
+                error_details = "\n".join(progress_data["errors"])
+
+            # Step 8: Create and return result
+            result = JobStatusResult(
+                job_id=query.job_id,
+                status=status_enum.value,  # Convert enum to string for Pydantic
+                progress=progress_data["progress"],
+                message=progress_data["message"],
+                result_ready=result_ready,
+                current_step=progress_data.get("stage"),  # May be None in early Phase
+                error_details=error_details,
+                created_at=None,  # Phase 2: Not tracked yet
+                updated_at=progress_data.get("last_heartbeat")
+            )
+
+            logger.info(f"Job {job_id_str} status retrieved: {status_enum.value} ({progress_data['progress']}%)")
+            return result
+
+        Error Handling (Phase 2 - Minimal):
+            - JobNotFoundException: When progress_data is None (job not found/expired)
+            - ValueError: When status value from Redis is invalid (shouldn't happen in happy path)
+            - Exception: Catch-all for unexpected errors (Redis connection, etc.)
+
+        Phase 3+ Extensions (NOT in Phase 2):
+            - created_at tracking: Store job creation timestamp in separate Redis key
+            - Metadata enrichment: Include worker info, queue position, estimated start
+            - History access: Return last 10 progress updates for debugging
+            - Cache layer: Add in-memory cache for frequently polled jobs
+            - Fallback: If Redis fails, try fallback file storage
+
+        Phase 2 Contract:
+            This method defines the interface contract with detailed documentation.
+            Actual implementation will be added in Phase 3 - Task 3.4.1.
         """
-        # Implementation in Phase 3 will:
-        # 1. Check Redis for key f"job:{query.job_id}"
-        # 2. Parse JSON value
-        # 3. Return JobStatusResult
-        # 4. Handle missing keys with JobNotFoundException
-
         raise NotImplementedError(
-            "Implementation in Phase 3. Will fetch from Redis using job_id as key."
+            "Implementation in Phase 3 - Task 3.4.1. "
+            "This is a detailed contract (Phase 2 - Task 2.4.3)."
         )
 
 
