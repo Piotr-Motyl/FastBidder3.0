@@ -120,11 +120,11 @@ class MatchingEngineProtocol(Protocol):
 
         Args:
             working_description: Description to be matched (from WF file)
-                - Must have extracted_parameters populated
+                - Must have extracted_params populated
                 - Must have valid raw_text
 
             reference_descriptions: Catalog of potential matches (from REF file)
-                - Each must have extracted_parameters populated
+                - Each must have extracted_params populated
                 - Typically 100-400 descriptions (Phase 1 limit)
 
             threshold: Minimum score for valid match (default 75.0)
@@ -152,12 +152,12 @@ class MatchingEngineProtocol(Protocol):
             >>> # High confidence match
             >>> wf_desc = HVACDescription(
             ...     raw_text="Zawór kulowy DN50 PN16 mosiężny",
-            ...     extracted_parameters={'dn': 50, 'pn': 16, 'material': 'brass'}
+            ...     extracted_params=ExtractedParameters(dn=50, pn=16, material='brass')
             ... )
             >>> ref_catalog = [
             ...     HVACDescription(
             ...         raw_text="Zawór kulowy mosiężny DN50 PN16 z siłownikiem",
-            ...         extracted_parameters={'dn': 50, 'pn': 16, 'material': 'brass'}
+            ...         extracted_params=ExtractedParameters(dn=50, pn=16, material='brass')
             ...     ),
             ...     # ... more references
             ... ]
@@ -178,12 +178,12 @@ class MatchingEngineProtocol(Protocol):
             >>> # No match scenario (DN mismatch)
             >>> wf_desc = HVACDescription(
             ...     raw_text="Zawór DN100",
-            ...     extracted_parameters={'dn': 100}
+            ...     extracted_params=ExtractedParameters(dn=100)
             ... )
             >>> ref_catalog = [
             ...     HVACDescription(
             ...         raw_text="Zawór DN50",
-            ...         extracted_parameters={'dn': 50}
+            ...         extracted_params=ExtractedParameters(dn=50)
             ...     )
             ... ]
             >>> result = await engine.match(wf_desc, ref_catalog, threshold=75.0)

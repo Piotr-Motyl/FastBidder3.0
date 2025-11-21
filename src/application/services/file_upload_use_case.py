@@ -28,85 +28,12 @@ Phase 2 Note:
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
-
-# ============================================================================
-# PROTOCOLS (Dependency Inversion)
-# ============================================================================
-
-
-class FileStorageServiceProtocol(Protocol):
-    """
-    Protocol for FileStorageService dependency injection.
-
-    This protocol defines the interface that FileStorageService must implement
-    for the FileUploadUseCase to work. Enables dependency inversion and testing.
-
-    Methods required from FileStorageService:
-        - save_uploaded_file(): Save file to upload storage
-        - extract_file_metadata(): Extract Excel metadata
-        - extract_file_preview(): Extract preview rows
-    """
-
-    async def save_uploaded_file(
-        self, file_id: UUID, file_data: bytes, filename: str
-    ) -> Path:
-        """
-        Save uploaded file to temporary upload storage.
-
-        Args:
-            file_id: Unique identifier for uploaded file
-            file_data: Raw file bytes from upload
-            filename: Original filename from user
-
-        Returns:
-            Path to saved file
-
-        Raises:
-            ValueError: If extension is invalid
-            FileSizeExceededError: If file too large
-            OSError: If file cannot be written
-        """
-        ...
-
-    async def extract_file_metadata(self, file_path: Path) -> dict:
-        """
-        Extract metadata from Excel file.
-
-        Args:
-            file_path: Path to Excel file
-
-        Returns:
-            Dict with metadata (filename, size, size_mb, sheets_count, rows_count, columns_count, created_at)
-
-        Raises:
-            FileNotFoundError: If file not found
-            ExcelParsingError: If file cannot be parsed
-        """
-        ...
-
-    async def extract_file_preview(
-        self, file_path: Path, rows: int = 5
-    ) -> list[dict]:
-        """
-        Extract preview of first N rows from Excel file.
-
-        Args:
-            file_path: Path to Excel file
-            rows: Number of rows to extract (default 5)
-
-        Returns:
-            List of dicts (each dict = one row)
-
-        Raises:
-            FileNotFoundError: If file not found
-            ExcelParsingError: If file cannot be parsed
-        """
-        ...
+from src.application.ports.file_storage import FileStorageServiceProtocol
 
 
 # ============================================================================

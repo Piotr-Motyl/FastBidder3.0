@@ -37,32 +37,11 @@ from fastapi import APIRouter, status, HTTPException, Path, Depends
 from pydantic import BaseModel, Field
 
 # Import shared models - now from Application Layer (correct dependency direction)
-from application.queries.get_job_status import GetJobStatusQueryHandler
+from src.application.queries.get_job_status import GetJobStatusQueryHandler
 from src.application.models import JobStatus
 
-
-# ============================================================================
-# RESPONSE MODEL (API Layer specific)
-# ============================================================================
-
-
-class ErrorResponse(BaseModel):
-    """
-    Standard error response model for all API errors.
-
-    Provides consistent error structure across all endpoints.
-
-    Attributes:
-        code: Machine-readable error code (e.g., "JOB_NOT_FOUND")
-        message: Human-readable error message
-        details: Optional additional error details
-    """
-
-    code: str = Field(description="Machine-readable error code")
-    message: str = Field(description="Human-readable error message")
-    details: Optional[dict] = Field(
-        default=None, description="Additional error context"
-    )
+# Import shared API schemas
+from src.api.schemas.common import ErrorResponse
 
 
 class JobStatusResponse(BaseModel):
@@ -88,8 +67,8 @@ class JobStatusResponse(BaseModel):
 
     status: JobStatus = Field(description="Current job status")
 
-    progress: Optional[int] = Field(
-        default=None, ge=0, le=100, description="Completion percentage (0-100)"
+    progress: int = Field(
+        default=0, ge=0, le=100, description="Completion percentage (0-100)"
     )
 
     message: str = Field(description="Human-readable status message with details")
@@ -106,9 +85,13 @@ class JobStatusResponse(BaseModel):
         default=None, description="Detailed error information if status=failed"
     )
 
-    created_at: str = Field(description="ISO 8601 timestamp when job was created")
+    created_at: Optional[str] = Field(
+        default=None, description="ISO 8601 timestamp when job was created"
+    )
 
-    updated_at: str = Field(description="ISO 8601 timestamp of last status update")
+    updated_at: Optional[str] = Field(
+        default=None, description="ISO 8601 timestamp of last status update"
+    )
 
     class Config:
         """Pydantic configuration."""

@@ -26,71 +26,16 @@ Phase 1 Note:
     This is a CONTRACT ONLY. Implementation in Phase 3.
 """
 
-from typing import Optional, Protocol
+from typing import TYPE_CHECKING, Optional
 from uuid import UUID
-from celery import Celery
 from pydantic import BaseModel, Field
 
 from src.application.commands.process_matching import ProcessMatchingCommand
 from src.application.models import JobStatus
+from src.application.ports.file_storage import FileStorageServiceProtocol
 
-
-# ============================================================================
-# PROTOCOL (Interface for dependency injection)
-# ============================================================================
-
-
-class FileStorageServiceProtocol(Protocol):
-    """
-    Protocol (interface) for file storage service.
-
-    Defines the contract that Infrastructure Layer must implement.
-    This follows Dependency Inversion Principle from SOLID.
-
-    Methods:
-        file_exists: Check if specific file exists in job storage
-        get_file_metadata: Get file metadata (size, format, timestamps)
-
-    Storage Structure (Phase 2):
-        Files are organized by job_id and file_type:
-        - {job_id}/input/working_file.xlsx
-        - {job_id}/input/reference_file.xlsx
-        - {job_id}/output/result.xlsx
-
-    Note:
-        Actual implementation in Infrastructure Layer:
-        src/infrastructure/file_storage/file_storage_service.py
-
-        Phase 2 Update:
-        Changed from file_id to (job_id, file_type) for better architecture.
-        Aligns with storage structure {job_id}/{input|output}/.
-    """
-
-    async def file_exists(self, job_id: UUID, file_type: str) -> bool:
-        """
-        Check if specific file exists in job storage.
-
-        Args:
-            job_id: UUID of the job
-            file_type: Type of file ("working", "reference", "result")
-
-        Returns:
-            True if file exists, False otherwise
-        """
-        ...
-
-    async def get_file_metadata(self, job_id: UUID, file_type: str) -> dict:
-        """
-        Get file metadata (size, format, timestamps).
-
-        Args:
-            job_id: UUID of the job
-            file_type: Type of file ("working", "reference", "result")
-
-        Returns:
-            Dict with metadata (size, format, created_at, modified_at, etc.)
-        """
-        ...
+if TYPE_CHECKING:
+    from celery import Celery
 
 
 # ============================================================================
@@ -221,7 +166,7 @@ class ProcessMatchingUseCase:
 
     def __init__(
         self,
-        celery_app: Celery,
+        celery_app: "Celery",
         file_storage: Optional[FileStorageServiceProtocol] = None,
     ):
         """

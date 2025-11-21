@@ -11,10 +11,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any
+from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from src.domain.hvac.value_objects.match_score import MatchScore
+from src.domain.hvac.value_objects.extracted_parameters import ExtractedParameters
 from src.domain.shared.exceptions import InvalidHVACDescriptionError
 
 
@@ -87,9 +88,10 @@ class HVACDescription:
     file_id: UUID | None = None
 
     # Processing results (populated during pipeline)
-    extracted_params: dict[str, Any] = field(default_factory=dict)
+    extracted_params: Optional[ExtractedParameters] = None
     match_score: MatchScore | None = None
     matched_price: Decimal | None = None
+    matched_description: str | None = None  # Text of matched reference description
 
     # State tracking
     state: HVACDescriptionState = HVACDescriptionState.CREATED
@@ -261,17 +263,17 @@ class HVACDescription:
         Check if technical parameters have been extracted.
 
         Returns:
-            True if extracted_params contains at least one parameter
+            True if extracted_params is set and contains at least one parameter
 
         Examples:
             >>> desc = HVACDescription(raw_text="Zawór DN50")
             >>> desc.has_parameters()
             False
-            >>> desc.extracted_params = {"dn": DiameterNominal(50)}
+            >>> desc.extracted_params = ExtractedParameters(dn=50, confidence_scores={"dn": 1.0})
             >>> desc.has_parameters()
             True
         """
-        return bool(self.extracted_params)
+        return self.extracted_params is not None and self.extracted_params.has_parameters()
 
     def to_dict(self) -> dict[str, Any]:
         """
@@ -294,39 +296,16 @@ class HVACDescription:
         return {
             "id": str(self.id),
             "raw_text": self.raw_text,
-            "extracted_params": self._serialize_params(self.extracted_params),
+            "extracted_params": self.extracted_params.to_dict() if self.extracted_params else None,
             "match_score": self.match_score.to_dict() if self.match_score else None,
             "source_row_number": self.source_row_number,
             "file_id": str(self.file_id) if self.file_id else None,
             "matched_price": str(self.matched_price) if self.matched_price else None,
+            "matched_description": self.matched_description,
             "state": self.state.value,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
-
-    def _serialize_params(self, params: dict[str, Any]) -> dict[str, Any]:
-        """
-        Serialize extracted parameters to JSON-compatible format.
-
-        Handles conversion of Value Objects (DN, PN) to strings.
-
-        Args:
-            params: Dictionary of parameters to serialize
-
-        Returns:
-            Serialized parameters dictionary
-        """
-        serialized = {}
-        for key, value in params.items():
-            # Check if value has to_string method (Value Objects)
-            if hasattr(value, "to_string"):
-                serialized[key] = value.to_string()
-            # Check if value has value attribute (Value Objects alternative)
-            elif hasattr(value, "value"):
-                serialized[key] = value.value
-            else:
-                serialized[key] = value
-        return serialized
 
     def merge_with_price(
         self, price: Decimal, matched_description: str, match_score: MatchScore
@@ -370,7 +349,7 @@ class HVACDescription:
 
         self.matched_price = price
         self.match_score = match_score
-        self.extracted_params["_matched_description"] = matched_description
+        self.matched_description = matched_description
         self.state = HVACDescriptionState.PRICED
         self.updated_at = datetime.now()
 
@@ -400,7 +379,7 @@ class HVACDescription:
         ):
             return None
 
-        matched_desc = self.extracted_params.get("_matched_description", "N/A")
+        matched_desc = self.matched_description or "N/A"
         score_pct = self.match_score.final_score
 
         report_parts = [f"Matched: {matched_desc}", f"Score: {score_pct:.1f}%"]
@@ -409,15 +388,11 @@ class HVACDescription:
             report_parts.append(f"Price: {self.matched_price} PLN")
 
         # Add key parameters if available
-        if "dn" in self.extracted_params:
-            dn = self.extracted_params["dn"]
-            dn_str = dn.to_string() if hasattr(dn, "to_string") else str(dn)
-            report_parts.append(f"DN: {dn_str}")
+        if self.extracted_params and self.extracted_params.dn is not None:
+            report_parts.append(f"DN: {self.extracted_params.dn}")
 
-        if "pn" in self.extracted_params:
-            pn = self.extracted_params["pn"]
-            pn_str = pn.to_string() if hasattr(pn, "to_string") else str(pn)
-            report_parts.append(f"PN: {pn_str}")
+        if self.extracted_params and self.extracted_params.pn is not None:
+            report_parts.append(f"PN: {self.extracted_params.pn}")
 
         return " | ".join(report_parts)
 
@@ -428,9 +403,10 @@ class HVACDescription:
         Returns:
             String representation for debugging
         """
+        text_preview = self.raw_text[:50] + ("..." if len(self.raw_text) > 50 else "")
         return (
             f"HVACDescription(id={self.id}, "
-            f"raw_text='{self.raw_text[:50]}...', "
+            f"raw_text='{text_preview}', "
             f"state={self.state.value})"
         )
 

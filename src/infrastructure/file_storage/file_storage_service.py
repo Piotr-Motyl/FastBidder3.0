@@ -42,7 +42,9 @@ class FileStorageService:
     """
     Service for managing file uploads and temporary storage.
 
-    Implements FileStorageServiceProtocol from Application Layer.
+    Implements: FileStorageServiceProtocol from Application Layer
+        (src.application.ports.file_storage.FileStorageServiceProtocol)
+
     This service handles all file system operations for FastBidder:
     - Validating uploaded Excel files
     - Storing files in job-specific directories

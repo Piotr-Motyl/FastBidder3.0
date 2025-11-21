@@ -30,7 +30,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from src.application.commands.process_matching import ProcessMatchingCommand
 from src.application.models import ReportFormat
-from src.domain.hvac import HVACDescription
+from src.domain.hvac.entities.hvac_description import HVACDescription
 
 
 class ExcelWriterService:
@@ -171,7 +171,7 @@ class ExcelWriterService:
         Implementation Details (Phase 3):
             - Use openpyxl.load_workbook() to preserve formatting
             - Create backup: original_file.xlsx → original_file_backup.xlsx
-            - Convert column letters to 0-based index using ProcessMatchingCommand.column_to_index()
+            - Convert column letters to column index for openpyxl (A=1, B=2, AA=27, etc.)
             - For each description:
                 * Get Excel row: desc.source_row_number (1-based)
                 * If desc.matched_price is not None:
@@ -231,12 +231,15 @@ class ExcelWriterService:
             >>> writer = ExcelWriterService()
             >>>
             >>> # Matched descriptions with scores
+            >>> from src.domain.hvac.value_objects.extracted_parameters import ExtractedParameters
+            >>> from src.domain.hvac.value_objects.match_score import MatchScore
+            >>> from decimal import Decimal
             >>> matched = [
             ...     HVACDescription(
             ...         raw_text="Zawór DN50",
-            ...         extracted_parameters={'dn': 50},
-            ...         match_score=95.2,
-            ...         matched_reference_id=UUID("...")
+            ...         extracted_params=ExtractedParameters(dn=50, confidence_scores={"dn": 1.0}),
+            ...         match_score=MatchScore.create(100.0, 92.0, 75.0),
+            ...         matched_price=Decimal("250.00")
             ...     ),
             ...     # ... more
             ... ]
@@ -385,11 +388,11 @@ class ExcelWriterService:
             >>> # Price written to F2, F3, F4, etc. (based on source_row_number)
 
         Implementation (Phase 3):
-            - Convert column letter to 0-based index
+            - Convert column letter to column index for openpyxl (A=1, B=2, AA=27)
             - For each description:
                 if desc.matched_price is not None:
                     row = desc.source_row_number (1-based)
-                    cell = ws.cell(row=row, column=col_idx+1)
+                    cell = ws.cell(row=row, column=col_idx)
                     cell.value = float(desc.matched_price)
                     # Note: openpyxl uses 1-based for both row and column
         """
@@ -425,12 +428,12 @@ class ExcelWriterService:
             >>> # Report written to G2, G3, G4, etc.
 
         Implementation (Phase 3):
-            - Convert column letter to 0-based index
+            - Convert column letter to column index for openpyxl (A=1, B=2, AA=27)
             - For each description:
                 if desc.match_score is not None:
                     report = desc.get_match_report()
                     row = desc.source_row_number
-                    cell = ws.cell(row=row, column=col_idx+1)
+                    cell = ws.cell(row=row, column=col_idx)
                     cell.value = report
             - Note: report_format might be used in future for different report styles
         """
@@ -465,14 +468,14 @@ class ExcelWriterService:
             >>> # Cells F2, F3, F4 colored based on match scores
 
         Implementation (Phase 3):
-            - Convert column letter to 0-based index
+            - Convert column letter to column index for openpyxl (A=1, B=2, AA=27)
             - For each description:
                 if desc.matched_price is not None and desc.match_score is not None:
                     score = desc.match_score.final_score
                     color = self._get_color_for_score(score)
                     if color:
                         row = desc.source_row_number
-                        cell = ws.cell(row=row, column=col_idx+1)
+                        cell = ws.cell(row=row, column=col_idx)
                         fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
                         cell.fill = fill
         """
@@ -531,9 +534,8 @@ class ExcelWriterService:
             >>> # Columns F and G widths adjusted
 
         Implementation (Phase 3):
-            - For each column letter:
-                * Convert to column index
-                * Get column letter from index for openpyxl (openpyxl.utils.get_column_letter)
+            - For each column letter in columns:
+                * Use column letter directly in openpyxl
                 * Calculate max width:
                     max_width = 0
                     for cell in ws[column_letter]:
@@ -598,9 +600,9 @@ class ExcelWriterService:
             >>> unmatched = [
             ...     HVACDescription(
             ...         raw_text="Niestandardowy element",
-            ...         extracted_parameters={},
+            ...         extracted_params=None,
             ...         match_score=None,
-            ...         matched_reference_id=None
+            ...         matched_price=None
             ...     ),
             ...     # ... more
             ... ]
@@ -612,7 +614,7 @@ class ExcelWriterService:
 
         Output Excel columns:
             - "Opis" (Description) - raw_text
-            - "Extracted Parameters" - JSON of extracted_parameters
+            - "Extracted Parameters" - JSON of extracted_params
             - "Reason" - why no match (no params, no similar items, etc.)
         """
         raise NotImplementedError(

@@ -32,6 +32,12 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, status, HTTPException, Depends, UploadFile, File
 from pydantic import BaseModel, Field
 
+# Import will be used in Phase 3 implementation
+# from src.application.use_cases.file_upload import FileUploadUseCase
+
+# Import shared API schemas
+from src.api.schemas.common import ErrorResponse
+
 
 # ============================================================================
 # RESPONSE MODELS
@@ -121,37 +127,6 @@ class UploadFileResponse(BaseModel):
                     },
                 ],
                 "message": "File uploaded successfully. Use file_id in matching requests.",
-            }
-        }
-
-
-class ErrorResponse(BaseModel):
-    """
-    Standard error response model for all API errors.
-
-    Used across all endpoints for consistent error handling.
-
-    Attributes:
-        code: Machine-readable error code
-        message: Human-readable error message
-        details: Optional additional error details
-    """
-
-    code: str = Field(description="Machine-readable error code")
-
-    message: str = Field(description="Human-readable error message")
-
-    details: Optional[Dict[str, Any]] = Field(
-        default=None,
-        description="Additional error context (validation errors, debug info)",
-    )
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "code": "INVALID_FILE_EXTENSION",
-                "message": "File extension must be .xlsx or .xls",
-                "details": {"filename": "document.pdf", "allowed": [".xlsx", ".xls"]},
             }
         }
 

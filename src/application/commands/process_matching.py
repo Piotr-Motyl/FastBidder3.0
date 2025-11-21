@@ -399,10 +399,10 @@ class ProcessMatchingCommand(BaseModel):
 
         # Rule 3 & 4: Validate working file range
         wf_range = self.working_file.description_range
-        if wf_range.start >= wf_range.end:
+        if wf_range.start > wf_range.end:
             errors.append(
                 f"working_file.description_range: start ({wf_range.start}) "
-                f"must be less than end ({wf_range.end})"
+                f"must be less than or equal to end ({wf_range.end})"
             )
 
         if wf_range.size() > self.MAX_ROWS_PER_FILE:
@@ -413,10 +413,10 @@ class ProcessMatchingCommand(BaseModel):
 
         # Rule 3 & 4: Validate reference file range
         rf_range = self.reference_file.description_range
-        if rf_range.start >= rf_range.end:
+        if rf_range.start > rf_range.end:
             errors.append(
                 f"reference_file.description_range: start ({rf_range.start}) "
-                f"must be less than end ({rf_range.end})"
+                f"must be less than or equal to end ({rf_range.end})"
             )
 
         if rf_range.size() > self.MAX_ROWS_PER_FILE:

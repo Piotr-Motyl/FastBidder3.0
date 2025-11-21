@@ -25,7 +25,7 @@ from uuid import UUID
 from redis import Redis
 from redis.exceptions import RedisError
 
-from src.domain.hvac import HVACDescription
+from src.domain.hvac.entities.hvac_description import HVACDescription
 
 
 class HVACDescriptionRepository:
@@ -133,9 +133,10 @@ class HVACDescriptionRepository:
 
         Examples:
             >>> repo = HVACDescriptionRepository()
+            >>> from src.domain.hvac.value_objects.extracted_parameters import ExtractedParameters
             >>> desc = HVACDescription(
             ...     raw_text="Zawór DN50",
-            ...     extracted_parameters={'dn': 50}
+            ...     extracted_params=ExtractedParameters(dn=50, confidence_scores={"dn": 1.0})
             ... )
             >>> await repo.save(desc)
         """

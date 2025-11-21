@@ -33,7 +33,11 @@ from uuid import UUID
 from fastapi import APIRouter, status, HTTPException, Depends
 from pydantic import BaseModel, Field
 
-from src.application.models import JobStatus
+from src.application.models import JobStatus, MatchingStrategy, ReportFormat
+from src.application.commands.process_matching import ProcessMatchingCommand
+
+# Import shared API schemas
+from src.api.schemas.common import ErrorResponse
 
 
 # ============================================================================
@@ -96,13 +100,13 @@ class ProcessMatchingRequest(BaseModel):
         le=100.0,
         description="Similarity threshold percentage. Matches below this value will be ignored.",
     )
-    matching_strategy: Optional[str] = Field(
-        default="best_match",
-        description="Strategy for multiple matches: 'first_match', 'best_match', 'all_matches'",
+    matching_strategy: MatchingStrategy = Field(
+        default=MatchingStrategy.BEST_MATCH,
+        description="Strategy for multiple matches: FIRST_MATCH, BEST_MATCH, ALL_MATCHES",
     )
-    report_format: Optional[str] = Field(
-        default="simple",
-        description="Report format: 'simple', 'detailed', 'debug'",
+    report_format: ReportFormat = Field(
+        default=ReportFormat.SIMPLE,
+        description="Report format: SIMPLE, DETAILED, DEBUG",
     )
 
     class Config:
@@ -167,33 +171,6 @@ class ProcessMatchingResponse(BaseModel):
         }
 
 
-class ErrorResponse(BaseModel):
-    """
-    Standard error response model for all API errors.
-
-    Attributes:
-        code: Machine-readable error code
-        message: Human-readable error message
-        details: Optional additional error details
-    """
-
-    code: str = Field(description="Machine-readable error code")
-
-    message: str = Field(description="Human-readable error message")
-
-    details: Optional[Dict[str, Any]] = Field(
-        default=None,
-        description="Additional error context (validation errors, debug info)",
-    )
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "code": "FILE_NOT_FOUND",
-                "message": "Working file not found in storage",
-                "details": {"file_id": "a3bb189e-8bf9-3888-9912-ace4e6543002"},
-            }
-        }
 
 
 # ============================================================================

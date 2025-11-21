@@ -15,7 +15,7 @@ Architecture Notes:
     - Follows CQRS pattern for read operations
 """
 
-from typing import Optional, Dict, Any
+from typing import Optional
 from uuid import UUID
 from pydantic import BaseModel, Field
 
@@ -59,7 +59,7 @@ class JobStatusResult(BaseModel):
     message: str
     result_ready: bool = False
     current_step: Optional[str] = None
-    error_details: Optional[Dict[str, Any]] = None
+    error_details: Optional[str] = None
     created_at: Optional[str] = None  # ISO datetime string
     updated_at: Optional[str] = None  # ISO datetime string
 

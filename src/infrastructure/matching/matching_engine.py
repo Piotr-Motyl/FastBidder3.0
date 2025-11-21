@@ -16,6 +16,9 @@ class ConcreteMatchingEngine:
     """
     Hybrid matching implementation (40% parameters + 60% semantic).
 
+    Implements: MatchingEngineProtocol from Domain Layer
+        (src.domain.hvac.services.matching_engine.MatchingEngineProtocol)
+
     This is the concrete implementation of MatchingEngineProtocol.
     Combines technical parameter matching with semantic similarity
     to achieve accurate HVAC equipment matching.

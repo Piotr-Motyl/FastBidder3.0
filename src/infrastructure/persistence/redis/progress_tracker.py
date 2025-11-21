@@ -51,6 +51,11 @@ class RedisProgressTracker:
     This class provides interface for storing and retrieving job progress information
     with extended metadata, history tracking, and error recovery.
 
+    Note on job_id parameter type:
+        All methods use job_id as string (not UUID) for Redis compatibility.
+        Redis keys must be strings, so we use str(job_id) throughout.
+        Application Layer passes UUID, which is converted to string here.
+
     Storage Format (Phase 2 - Extended):
         Redis keys:
         - "progress:{job_id}" -> JSON dict with progress data

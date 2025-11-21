@@ -27,7 +27,7 @@ from uuid import UUID
 
 import polars as pl
 
-from src.domain.hvac import HVACDescription
+from src.domain.hvac.entities.hvac_description import HVACDescription
 from src.domain.shared.exceptions import (
     FileSizeExceededError,
     ExcelParsingError,
@@ -184,7 +184,7 @@ class ExcelReaderService:
             - Fallback to engine="openpyxl" if calamine fails
             - Encoding: Try UTF-8, fallback to CP1250 (Polish chars)
             - Cache DataFrame in memory: key=(file_path_str, sheet_name)
-            - Convert column letter to 0-based index using ProcessMatchingCommand.column_to_index()
+            - Convert column letter to 0-based index (implement own conversion: A=0, B=1, AA=26, etc.)
             - Skip rows where description cell is None or "" (after trim)
             - Trim whitespace from each description text
             - Use HVACDescription.from_excel_row() factory method
@@ -314,8 +314,7 @@ class ExcelReaderService:
             >>> reader._validate_column_exists(df, "Z")  # Raises ColumnNotFoundError
 
         Implementation (Phase 3):
-            - Import ProcessMatchingCommand.column_to_index()
-            - Convert column letter to 0-based index
+            - Convert column letter to 0-based index (A=0, B=1, AA=26, etc.)
             - Check if index < len(dataframe.columns)
             - If not exists, raise ColumnNotFoundError with details:
                 "Column '{column}' (index {index}) not found.
@@ -366,7 +365,7 @@ class ExcelReaderService:
             >>> # Rows 2 and 4 filtered out (empty string and None)
 
         Implementation (Phase 3):
-            - Convert column letter to 0-based index using column_to_index()
+            - Convert column letter to 0-based index (A=0, B=1, AA=26, etc.)
             - Convert start_row/end_row from 1-based to 0-based for DataFrame slicing
             - Slice DataFrame: df[start_idx:end_idx]
             - Get column data: df[column_name]

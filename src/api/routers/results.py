@@ -38,29 +38,8 @@ from src.infrastructure.file_storage.file_storage_service import FileStorageServ
 from src.infrastructure.persistence.redis.progress_tracker import RedisProgressTracker
 from src.application.models import JobStatus
 
-
-# ============================================================================
-# RESPONSE MODELS
-# ============================================================================
-
-
-class ErrorResponse(BaseModel):
-    """
-    Standard error response model for all API errors.
-
-    Provides consistent error structure across all endpoints.
-
-    Attributes:
-        code: Machine-readable error code
-        message: Human-readable error message
-        details: Optional additional error details
-    """
-
-    code: str = Field(description="Machine-readable error code")
-    message: str = Field(description="Human-readable error message")
-    details: Optional[dict] = Field(
-        default=None, description="Additional error context"
-    )
+# Import shared API schemas
+from src.api.schemas.common import ErrorResponse
 
 
 # ============================================================================
