@@ -1,10 +1,39 @@
 # FastBidder 3.0
 
-> AI-powered HVAC product matching system with hybrid parameter + semantic search
+> 🚀 AI-powered HVAC product matching system with hybrid parameter + semantic search
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com/)
 [![Celery](https://img.shields.io/badge/Celery-5.3+-red.svg)](https://docs.celeryq.dev/)
+[![Redis](https://img.shields.io/badge/Redis-7.0+-DC382D.svg)](https://redis.io/)
+[![Polars](https://img.shields.io/badge/Polars-0.20+-CD792C.svg)](https://www.pola.rs/)
+[![Docker](https://img.shields.io/badge/Docker-24.0+-2496ED.svg)](https://www.docker.com/)
+[![Clean Architecture](https://img.shields.io/badge/Architecture-Clean-brightgreen.svg)](https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html)
+[![License](https://img.shields.io/badge/license-Portfolio-blue.svg)](LICENSE)
+
+---
+
+## 📑 Table of Contents
+
+- [About The Project](#-about-the-project)
+- [Current Implementation Status](#-current-implementation-status)
+- [Architecture Overview](#%EF%B8%8F-architecture-overview)
+- [Domain Model](#-domain-model)
+- [Matching Algorithm](#-matching-algorithm)
+- [Project Structure](#-project-structure)
+- [Happy Path Workflow](#-happy-path-workflow)
+- [Module Responsibilities](#-module-responsibilities)
+- [Quick Start](#-quick-start)
+- [Development Commands](#%EF%B8%8F-development-commands)
+- [Configuration](#-configuration)
+- [Monitoring & Debugging](#-monitoring--debugging)
+- [Testing](#-testing)
+- [Key Concepts](#-key-concepts)
+- [Contributing](#-contributing)
+- [License](#-license)
+- [Contact](#-contact)
+
+---
 
 ## 📖 About The Project
 
@@ -17,6 +46,8 @@ This project demonstrates production-grade architecture principles: **Clean Arch
 ---
 
 ## 🎯 Current Implementation Status
+
+### ✅ Completed Phases
 
 **Phase 0: Infrastructure Setup** ✅ **COMPLETED**
 - [x] Project structure (Clean Architecture)
@@ -31,18 +62,25 @@ This project demonstrates production-grade architecture principles: **Clean Arch
 - [x] Task 1.1.3: Domain Layer contracts (Entities, Services, Value Objects)
 - [x] Task 1.1.4: Infrastructure Layer contracts (FileStorage, Redis, Excel services)
 
-**Next Steps:** Phase 2 - Detailed contracts and validations
+**Phase 2: Detailed Contracts & Code Review** ✅ **COMPLETED**
+- [x] Sprint 2.1: API Layer - detailed contracts (4 routers, shared schemas)
+- [x] Sprint 2.2: Application Layer - flow orchestration (Commands, Queries, Ports)
+- [x] Sprint 2.3: Infrastructure Layer - adapters implementation contracts
+- [x] Sprint 2.4: API & Infrastructure - detailed contracts finalization
 
-**Phases Overview:**
+### 📋 Phases Overview
+
 ```
-Phase 0: Setup          ✅ Done
-Phase 1: Contracts      ✅ Done (100%)
-Phase 2: Detailed       ⏳ Pending
-Phase 3: Implementation ⏳ Pending
-Phase 4: AI Integration ⏳ Pending
-Phase 5: Advanced       ⏳ Pending
-Phase 6: Testing & Docs ⏳ Pending
+Phase 0: Setup                ✅ Done
+Phase 1: High-Level Contracts ✅ Done 
+Phase 2: Detailed Contracts   ✅ Done 
+Phase 3: Implementation       ⏳ Next (Happy Path)
+Phase 4: AI Integration       ⏳ Pending (Semantic matching)
+Phase 5: Advanced Features    ⏳ Pending (Batch, optimization)
+Phase 6: Testing & Docs       ⏳ Pending (Unit, integration, E2E)
 ```
+
+**Next Steps:** Phase 3 - Happy Path Implementation (core matching workflow)
 
 ---
 
@@ -50,45 +88,238 @@ Phase 6: Testing & Docs ⏳ Pending
 
 ### Clean Architecture Layers
 
-FastBidder follows **Clean Architecture** with strict dependency rules:
+FastBidder follows **Clean Architecture** with strict dependency rules and **Protocol-based dependency inversion**:
 
 ```
 ┌─────────────────────────────────────────┐
-│         API Layer (Presentation)        │  ← HTTP endpoints
-│  - FastAPI routers                      │
-│  - Request/Response models              │
+│         API Layer (Presentation)        │  ← HTTP endpoints (FastAPI)
+│  - Routers: matching, jobs, files       │
+│  - Request/Response schemas (Pydantic)  │
+│  - Shared ErrorResponse schema          │
 └──────────────┬──────────────────────────┘
                │ depends on
 ┌──────────────▼──────────────────────────┐
-│       Application Layer (Use Cases)     │  ← Orchestration
+│       Application Layer (Use Cases)     │  ← Orchestration (CQRS)
 │  - Commands (CQRS Write)                │
 │  - Queries (CQRS Read)                  │
-│  - Use Cases (orchestration)            │
+│  - Use Cases (business flow)            │
 │  - Celery Tasks (async processing)      │
+│  - Ports (Protocol interfaces)          │
 └──────────────┬──────────────────────────┘
                │ depends on
 ┌──────────────▼──────────────────────────┐
-│       Domain Layer (Business Logic)     │  ← Core business rules
+│       Domain Layer (Business Logic)     │  ← Core business rules (DDD)
 │  - Entities (HVACDescription)           │
-│  - Value Objects (MatchScore, Result)   │
-│  - Domain Services (MatchingEngine)     │
-│  - Repository Interfaces                │
+│  - Value Objects (MatchScore, etc.)     │
+│  - Domain Services (Protocols)          │
+│  - Repository Interfaces (Protocols)    │
 └──────────────▲──────────────────────────┘
-               │ implemented by
+               │ implemented by (Dependency Inversion)
 ┌──────────────┴──────────────────────────┐
 │    Infrastructure Layer (External)      │  ← Technical capabilities
 │  - Redis (progress tracking, cache)     │
-│  - File Storage (Excel files)           │
+│  - File Storage (Excel: Polars/openpyxl)│
 │  - Repository Implementations           │
 │  - Matching Engine Implementation       │
 └─────────────────────────────────────────┘
 ```
 
-**Key Principles:**
+### 🎯 Key Principles
+
 - **Dependency Inversion**: Outer layers depend on inner layers (never reverse)
+  - Infrastructure implements Domain Protocols
+  - Application defines Ports, Infrastructure implements them
 - **CQRS Pattern**: Separate Commands (write) from Queries (read)
-- **Contract-First**: Define interfaces before implementation
-- **Async by Design**: Long-running operations via Celery
+- **Contract-First**: Define interfaces before implementation (Protocols)
+- **Async by Design**: Long-running operations via Celery + Redis
+
+---
+
+## 🧬 Domain Model
+
+FastBidder uses **Domain-Driven Design** with clear separation between Entities, Value Objects, and Domain Services.
+
+### 📦 Entities (Mutable, with Identity)
+
+**HVACDescription** - Core domain entity representing HVAC equipment description
+```python
+@dataclass
+class HVACDescription:
+    id: UUID                                    # Unique identifier
+    raw_text: str                               # Original description text
+    source_row_number: int                      # Excel row (1-based)
+    file_id: UUID                               # Source file identifier
+    extracted_params: ExtractedParameters | None  # Extracted DN, PN, etc.
+    match_score: MatchScore | None              # Hybrid match score
+    matched_price: Decimal | None               # Price from reference catalog
+    matched_description: str | None             # Matched reference text
+    state: EntityState                          # CREATED → PARAMETERS_EXTRACTED → MATCHED → PRICED
+
+```
+
+### 💎 Value Objects (Immutable, no Identity)
+
+**ExtractedParameters** - Technical parameters extracted from description
+```python
+@dataclass(frozen=True)
+class ExtractedParameters:
+    dn: int | None                    # Diameter Nominal (DN50, DN100)
+    pn: int | None                    # Pressure Nominal (PN16, PN10)
+    material: str | None              # Material (brass, steel, etc.)
+    valve_type: str | None            # Type (ball valve, check valve)
+    confidence_scores: dict[str, float]  # Extraction confidence (0.0-1.0)
+```
+
+**MatchScore** - Hybrid matching score breakdown
+```python
+@dataclass(frozen=True)
+class MatchScore:
+    final_score: float              # Combined score (0-100)
+    parameter_score: float          # Parameter matching (0-100)
+    semantic_score: float           # Semantic similarity (0-100)
+
+    @staticmethod
+    def create(final: float, param: float, semantic: float) -> MatchScore:
+        """Factory with validation (40% param + 60% semantic)"""
+```
+
+**MatchResult** - Complete match result with justification
+```python
+@dataclass(frozen=True)
+class MatchResult:
+    matched_reference_id: UUID           # Reference item UUID
+    score: MatchScore                    # Score breakdown
+    justification: str                   # Human-readable explanation
+    parameter_scores: dict[str, float]   # Individual param scores
+    semantic_score: float                # Raw semantic similarity
+```
+
+### 🔧 Domain Services (Protocols)
+
+**MatchingEngineProtocol** - Hybrid matching service interface
+```python
+class MatchingEngineProtocol(Protocol):
+    def match(
+        self,
+        working_item: HVACDescription,
+        reference_catalog: list[HVACDescription],
+        threshold: float = 75.0
+    ) -> MatchResult | None:
+        """Find best match using hybrid algorithm"""
+```
+
+**ParameterExtractorProtocol** - Parameter extraction service
+```python
+class ParameterExtractorProtocol(Protocol):
+    def extract(self, text: str) -> ExtractedParameters:
+        """Extract DN, PN, material from text using regex"""
+```
+
+---
+
+## 🎲 Matching Algorithm
+
+FastBidder uses a **hybrid matching algorithm** combining parameter-based and semantic similarity matching.
+
+### Algorithm Overview
+
+```
+┌─────────────────────┐
+│  Working Item       │
+│  "Zawór DN50 PN16"  │
+└──────────┬──────────┘
+           │
+    ┌──────▼────────────────────────┐
+    │  1. Parameter Extraction      │
+    │  DN=50, PN=16, type=valve     │
+    └──────┬────────────────────────┘
+           │
+    ┌──────▼──────────────────────────────┐
+    │  2. For each reference item:        │
+    │                                      │
+    │  ┌────────────────────────────────┐ │
+    │  │ A. Parameter Matching (40%)    │ │
+    │  │    - DN: Exact match → 100%    │ │
+    │  │    - PN: Exact match → 100%    │ │
+    │  │    - Material: Fuzzy → 0-100%  │ │
+    │  │    Average → param_score       │ │
+    │  └────────────────────────────────┘ │
+    │                                      │
+    │  ┌────────────────────────────────┐ │
+    │  │ B. Semantic Matching (60%)     │ │
+    │  │    - Embeddings (transformers) │ │
+    │  │    - Cosine similarity         │ │
+    │  │    → semantic_score            │ │
+    │  └────────────────────────────────┘ │
+    │                                      │
+    │  ┌────────────────────────────────┐ │
+    │  │ C. Combine Scores              │ │
+    │  │ final = 0.4×param + 0.6×sem    │ │
+    │  └────────────────────────────────┘ │
+    └─────────────────────────────────────┘
+           │
+    ┌──────▼────────────────────┐
+    │  3. Filter & Sort         │
+    │  - Keep score >= threshold│
+    │  - Return best match      │
+    └───────────────────────────┘
+```
+
+### 📊 Scoring Details
+
+**High-Level Scoring Model**
+The algorithm uses a **two-component hybrid approach**:
+- **Parameter Matching**: 40% weight (technical parameters)
+- **Semantic Matching**: 60% weight (AI embeddings)
+
+**Final Score Formula**
+```
+final_score = (0.4 × parameter_score) + (0.6 × semantic_score)
+```
+
+**Detailed Parameter Scoring (within the 40% parameter weight)**
+The parameter_score is calculated from individual parameter weights:
+- **DN (Diameter)**: 30% - Exact match only
+  - DN50 = DN50 → 100%
+  - DN50 ≠ DN100 → 0%
+- **PN (Pressure)**: 10% - Exact match only
+  - PN16 = PN16 → 100%
+  - PN16 ≠ PN10 → 0%
+- **Material**: 15% - Fuzzy matching with synonyms
+  - "brass" ~= "mosiądz" → 90%
+  - "steel" ~= "stainless steel" → 80%
+- **Valve Type**: 15% - Semantic similarity
+  - "ball valve" ~= "zawór kulowy" → 95%
+- **Other Parameters**: Other parameters will be added systematically as the program develops.
+
+
+**Note**: The granular weights (DN=30%, PN=10%, Material=15%, Type=15%) are normalized within the parameter_score component, which then contributes 40% to the final score.
+
+**Semantic Matching (60% weight)**
+- Uses **sentence-transformers** (multilingual model)
+- Converts descriptions to embeddings (768-dim vectors)
+- Calculates **cosine similarity** (0.0 to 1.0)
+- Scaled to 0-100 range
+
+**Threshold Logic**
+- Default threshold: **75.0** (configurable)
+- Return match only if `final_score >= threshold`
+- If multiple matches above threshold → return highest score
+- If no matches above threshold → return `None`
+
+### 🎯 Matching Engines
+
+**HybridMatchingEngine** (Phase 4 - AI Integration)
+- Full hybrid matching (40% param + 60% semantic)
+- Uses sentence-transformers for embeddings
+- ChromaDB for vector similarity search
+- Production-ready implementation with all features
+
+**SimpleMatchingEngine** (Phase 3 - Happy Path)
+- Fallback engine for initial implementation
+- Parameter-based exact matching only
+- No AI/embeddings (faster, simpler)
+- Used for testing and as fallback when AI unavailable
 
 ---
 
@@ -97,85 +328,122 @@ FastBidder follows **Clean Architecture** with strict dependency rules:
 ```
 fastbidder/
 ├── src/
-│   ├── api/                     # API Layer (Presentation)
-│   │   └── routers/
-│   │       ├── matching.py      # 📝 POST /matching/process (contract)
-│   │       ├── jobs.py          # 📝 GET /jobs/{job_id}/status (contract)
-│   │       └── __init__.py
+│   ├── api/                          # 🌐 API Layer (Presentation)
+│   │   ├── routers/
+│   │   │   ├── matching.py           # POST /matching/process
+│   │   │   ├── jobs.py               # GET /jobs/{job_id}/status
+│   │   │   ├── files.py              # POST /files/upload
+│   │   │   ├── results.py            # GET /results/{job_id}/download
+│   │   │   └── __init__.py
+│   │   ├── schemas/
+│   │   │   ├── common.py             # ErrorResponse (shared)
+│   │   │   └── __init__.py
+│   │   ├── graphql/                  # ⏳ GraphQL API (Phase 5)
+│   │   │   ├── schema.py             # Strawberry schema
+│   │   │   ├── queries.py            # GraphQL queries
+│   │   │   └── mutations.py          # GraphQL mutations
+│   │   ├── websockets/               # ⏳ Real-time (Phase 5)
+│   │   │   ├── sse.py                # Server-Sent Events
+│   │   │   └── handlers.py           # WebSocket handlers
+│   │   └── main.py                   # FastAPI app
 │   │
-│   ├── application/             # Application Layer (Orchestration)
+│   ├── application/                  # 🎯 Application Layer (Use Cases)
 │   │   ├── commands/
-│   │   │   ├── process_matching.py  # 📝 ProcessMatchingCommand
+│   │   │   ├── process_matching.py   # ProcessMatchingCommand
 │   │   │   └── __init__.py
 │   │   ├── queries/
-│   │   │   ├── get_job_status.py    # 📝 GetJobStatusQuery + Handler
+│   │   │   ├── get_job_status.py     # GetJobStatusQuery + Handler
 │   │   │   └── __init__.py
 │   │   ├── services/
-│   │   │   ├── process_matching_use_case.py  # 📝 ProcessMatchingUseCase
+│   │   │   ├── process_matching_use_case.py  # Main orchestration
+│   │   │   ├── file_upload_use_case.py       # File validation
 │   │   │   └── __init__.py
 │   │   ├── tasks/
-│   │   │   ├── celery_app.py        # ✅ Celery config (working)
-│   │   │   ├── matching_tasks.py    # 📝 process_matching_task
+│   │   │   ├── celery_app.py         # ✅ Celery config
+│   │   │   ├── matching_tasks.py     # Async matching task
 │   │   │   └── __init__.py
-│   │   └── models.py                # ✅ JobStatus enum
+│   │   ├── ports/
+│   │   │   ├── file_storage.py       # FileStorageServiceProtocol
+│   │   │   └── __init__.py
+│   │   └── models.py                 # JobStatus, MatchingStrategy, ReportFormat
 │   │
-│   ├── domain/                  # Domain Layer (Business Logic)
+│   ├── domain/                       # 🧬 Domain Layer (Business Logic)
 │   │   ├── hvac/
 │   │   │   ├── entities/
-│   │   │   │   ├── hvac_description.py      # 📝 HVACDescription
+│   │   │   │   ├── hvac_description.py       # HVACDescription entity
 │   │   │   │   └── __init__.py
 │   │   │   ├── value_objects/
-│   │   │   │   ├── match_score.py           # 📝 MatchScore
-│   │   │   │   ├── match_result.py          # 📝 MatchResult
+│   │   │   │   ├── extracted_parameters.py   # DN, PN, material
+│   │   │   │   ├── match_score.py            # Hybrid score
+│   │   │   │   ├── match_result.py           # Match result
 │   │   │   │   └── __init__.py
 │   │   │   ├── services/
-│   │   │   │   ├── matching_engine.py       # 📝 MatchingEngineProtocol
+│   │   │   │   ├── matching_engine.py        # MatchingEngineProtocol
+│   │   │   │   ├── parameter_extractor.py    # ParameterExtractorProtocol
+│   │   │   │   ├── simple_matching_engine.py # SimpleMatchingEngine (fallback)
 │   │   │   │   └── __init__.py
 │   │   │   └── repositories/
-│   │   │       ├── hvac_description_repository.py  # 📝 Protocol
+│   │   │       ├── hvac_description_repository.py  # Protocol
 │   │   │       └── __init__.py
 │   │   └── shared/
-│   │       ├── exceptions.py                # 📝 DomainException
+│   │       ├── exceptions.py         # DomainException hierarchy
 │   │       └── __init__.py
 │   │
-│   ├── infrastructure/          # Infrastructure Layer (External)
+│   ├── infrastructure/               # ⚙️ Infrastructure Layer (External)
 │   │   ├── persistence/
 │   │   │   ├── redis/
-│   │   │   │   ├── progress_tracker.py      # 📝 RedisProgressTracker
+│   │   │   │   ├── progress_tracker.py       # RedisProgressTracker
 │   │   │   │   └── __init__.py
 │   │   │   ├── repositories/
-│   │   │   │   ├── hvac_description_repository.py  # 📝 Implementation
+│   │   │   │   ├── hvac_description_repository.py  # Redis impl
 │   │   │   │   └── __init__.py
 │   │   │   └── __init__.py
 │   │   ├── file_storage/
-│   │   │   ├── file_storage_service.py      # 📝 FileStorageService
-│   │   │   ├── excel_reader.py              # 📝 ExcelReaderService
-│   │   │   ├── excel_writer.py              # 📝 ExcelWriterService
+│   │   │   ├── file_storage_service.py       # FileStorageService
+│   │   │   ├── excel_reader.py               # Polars-based reader
+│   │   │   ├── excel_writer.py               # openpyxl-based writer
 │   │   │   └── __init__.py
 │   │   ├── matching/
-│   │   │   ├── matching_engine.py           # 📝 ConcreteMatchingEngine
+│   │   │   ├── matching_engine.py            # HybridMatchingEngine (Phase 4)
 │   │   │   └── __init__.py
+│   │   ├── ai/                       # ⏳ AI/ML Infrastructure (Phase 4)
+│   │   │   ├── embeddings/
+│   │   │   │   ├── sentence_transformer.py   # Model wrapper
+│   │   │   │   └── cache.py                 # Embedding cache
+│   │   │   └── nlp/
+│   │   │       ├── spacy_pipeline.py        # spaCy NER
+│   │   │       └── patterns.py              # HVAC patterns
+│   │   ├── monitoring/               # ⏳ Observability (Phase 5)
+│   │   │   ├── logging.py            # Structured logging
+│   │   │   ├── metrics.py            # Prometheus metrics
+│   │   │   └── tracing.py            # OpenTelemetry
 │   │   └── __init__.py
 │   │
-│   └── shared/                  # Cross-cutting concerns
-│       └── utils/
+│   └── shared/                       # 🔧 Cross-cutting concerns
+│       ├── config.py                 # ⏳ Configuration management (Phase 3)
+│       ├── constants.py              # ⏳ App constants (Phase 3)
+│       ├── exceptions.py             # ⏳ Global exceptions (Phase 3)
+│       ├── utils/                    # ⏳ Utilities (Phase 3+)
+│       └── __init__.py
 │
 ├── docker/
 │   ├── Dockerfile
 │   └── .dockerignore
 │
-├── docker-compose.yml
-├── Makefile
-├── pyproject.toml
+├── docker-compose.yml                # Redis + Celery + Flower
+├── Makefile                          # 14 development commands
+├── pyproject.toml                    # Poetry dependencies
 ├── poetry.lock
-├── .env
+├── .env                              # Environment variables
 ├── .env.example
+├── ROADMAP.md                        # Detailed implementation plan
+├── Implementation_plan.md            # Sprint breakdown
 └── README.md
 
 Legend:
 ✅ Implemented/Working
-📝 Contract defined (implementation in Phase 3)
-⏳ Pending (not started)
+📝 Contract defined (Phase 2 - ready for Phase 3 implementation)
+⏳ Placeholder (Phase 3+)
 ```
 
 ---
@@ -187,62 +455,70 @@ Legend:
 ### Request Flow (End-to-End)
 
 ```
-1. User uploads files
+1. 📤 User uploads files
+   POST /files/upload (2x: working + reference)
+   Returns: { file_id: UUID }
+        ↓
+
+2. 🚀 User triggers matching
    POST /matching/process
    {
      "wf_file_id": "uuid-working-file",
      "ref_file_id": "uuid-reference-file",
-     "threshold": 75.0
+     "threshold": 75.0,
+     "matching_strategy": "HYBRID",
+     "report_format": "DETAILED"
    }
         ↓
-2. API Layer (matching.py)
+
+3. 🌐 API Layer (matching.py)
    - Validates request (Pydantic)
    - Creates ProcessMatchingCommand
    - Injects ProcessMatchingUseCase
         ↓
-3. Application Layer (ProcessMatchingUseCase)
+
+4. 🎯 Application Layer (ProcessMatchingUseCase)
    - Validates business rules (files exist, valid format)
    - Estimates processing time
    - Triggers Celery task
         ↓
-4. Celery Task (process_matching_task)
+
+5. ⚡ Celery Task (process_matching_task)
    - Queued in Redis
-   - Returns job_id immediately
-   
-   [ASYNC EXECUTION STARTS]
+   - Returns: { job_id: UUID, status: "queued" }
+
+   [ASYNC EXECUTION STARTS IN BACKGROUND]
         ↓
-5. Celery Worker (background)
-   - Loads Excel files (Polars)
-   - Extracts descriptions (HVACDescription entities)
-   - Extracts parameters (DN, PN, etc.)
-   - Matches descriptions (ConcreteMatchingEngine)
-   - Generates results with prices
-   - Updates progress in Redis (0% → 100%)
+
+6. 🔄 Celery Worker (background processing)
+   a. Load Excel files (Polars for speed)
+   b. Parse descriptions → HVACDescription entities
+   c. Extract parameters → ExtractedParameters (DN, PN, etc.)
+   d. Match descriptions → MatchingEngine.match()
+   e. Calculate hybrid scores → MatchScore
+   f. Generate results with prices
+   g. Write output Excel (openpyxl)
+   h. Update progress in Redis (0% → 100%)
         ↓
-6. User polls status
+
+7. 📊 User polls status
    GET /jobs/{job_id}/status
-        ↓
-7. API Layer (jobs.py)
-   - Creates GetJobStatusQuery
-   - Injects GetJobStatusQueryHandler
-        ↓
-8. Query Handler
-   - Retrieves status from Redis
-   - Returns JobStatusResult
-        ↓
-9. User receives status
-   {
+   Returns: {
      "status": "processing",
      "progress": 45,
      "message": "Matching descriptions (45/100)"
    }
         ↓
-10. When complete (status: "completed")
-    User downloads results
-    GET /results/{job_id}/download
+
+8. ✅ When complete (status: "completed")
+   GET /results/{job_id}/download
+   Returns: Excel file with:
+     - Original columns
+     - Matched prices (colored by score)
+     - Match reports (DN, PN, score)
 ```
 
-### Data Flow Diagram
+### 📊 Data Flow Diagram
 
 ```
 ┌──────────┐    HTTP     ┌─────────────┐
@@ -265,7 +541,7 @@ Legend:
             ┌───────▼────────────────────────▼───────┐
             │         Infrastructure Layer           │
             │  - Redis (progress, cache)             │
-            │  - FileStorage (Excel files)           │
+            │  - FileStorage (Polars/openpyxl)       │
             │  - MatchingEngine (hybrid algorithm)   │
             └────────────────────────────────────────┘
 ```
@@ -274,41 +550,53 @@ Legend:
 
 ## 📋 Module Responsibilities
 
-### API Layer
+### 🌐 API Layer (Presentation)
+
 | File | Responsibility | Status | Key Components |
 |------|---------------|--------|----------------|
 | `api/routers/matching.py` | Trigger async matching process | 📝 Contract | `POST /matching/process` |
 | `api/routers/jobs.py` | Query job status | 📝 Contract | `GET /jobs/{job_id}/status` |
+| `api/routers/files.py` | File upload endpoints | 📝 Contract | `POST /files/upload` |
+| `api/routers/results.py` | Result download | 📝 Contract | `GET /results/{job_id}/download` |
+| `api/schemas/common.py` | Shared response schemas | 📝 Contract | `ErrorResponse` |
 
-### Application Layer
+### 🎯 Application Layer (Use Cases)
+
 | File | Responsibility | Status | Key Components |
 |------|---------------|--------|----------------|
-| `application/commands/process_matching.py` | CQRS Write command | 📝 Contract | `ProcessMatchingCommand` |
-| `application/queries/get_job_status.py` | CQRS Read query + handler | 📝 Contract | `GetJobStatusQuery`, `GetJobStatusQueryHandler` |
-| `application/services/process_matching_use_case.py` | Orchestrates matching flow | 📝 Contract | `ProcessMatchingUseCase` |
-| `application/tasks/celery_app.py` | Celery configuration | ✅ Working | `celery_app`, `health_check` task |
-| `application/tasks/matching_tasks.py` | Async matching task | 📝 Contract | `process_matching_task` |
-| `application/models.py` | Shared models | ✅ Working | `JobStatus` enum |
+| `commands/process_matching.py` | CQRS Write command | 📝 Contract | `ProcessMatchingCommand` |
+| `queries/get_job_status.py` | CQRS Read query + handler | 📝 Contract | `GetJobStatusQuery`, `GetJobStatusQueryHandler` |
+| `services/process_matching_use_case.py` | Orchestrates matching flow | 📝 Contract | `ProcessMatchingUseCase` |
+| `services/file_upload_use_case.py` | File validation & storage | 📝 Contract | `FileUploadUseCase` |
+| `tasks/celery_app.py` | Celery configuration | ✅ Working | `celery_app`, `health_check` task |
+| `tasks/matching_tasks.py` | Async matching task | 📝 Contract | `process_matching_task` |
+| `ports/file_storage.py` | File storage Protocol | 📝 Contract | `FileStorageServiceProtocol` |
+| `models.py` | Shared models & enums | 📝 Contract | `JobStatus`, `MatchingStrategy`, `ReportFormat` |
 
-### Domain Layer
+### 🧬 Domain Layer (Business Logic)
+
 | File | Responsibility | Status | Key Components |
 |------|---------------|--------|----------------|
-| `domain/hvac/entities/hvac_description.py` | Core entity | 📝 Contract | `HVACDescription` |
-| `domain/hvac/value_objects/match_score.py` | Hybrid scoring | 📝 Contract | `MatchScore` |
-| `domain/hvac/value_objects/match_result.py` | Match result | 📝 Contract | `MatchResult` |
-| `domain/hvac/services/matching_engine.py` | Matching service interface | 📝 Contract | `MatchingEngineProtocol` |
-| `domain/hvac/repositories/hvac_description_repository.py` | Repository interface | 📝 Contract | `HVACDescriptionRepositoryProtocol` |
-| `domain/shared/exceptions.py` | Domain exceptions | 📝 Contract | `DomainException` |
+| `entities/hvac_description.py` | Core domain entity | 📝 Contract | `HVACDescription` |
+| `value_objects/extracted_parameters.py` | Technical parameters | 📝 Contract | `ExtractedParameters` |
+| `value_objects/match_score.py` | Hybrid scoring | 📝 Contract | `MatchScore` |
+| `value_objects/match_result.py` | Match result | 📝 Contract | `MatchResult` |
+| `services/matching_engine.py` | Matching service Protocol | 📝 Contract | `MatchingEngineProtocol` |
+| `services/parameter_extractor.py` | Parameter extraction Protocol | 📝 Contract | `ParameterExtractorProtocol` |
+| `services/simple_matching_engine.py` | Fallback matching engine | 📝 Contract | `SimpleMatchingEngine` |
+| `repositories/hvac_description_repository.py` | Repository Protocol | 📝 Contract | `HVACDescriptionRepositoryProtocol` |
+| `shared/exceptions.py` | Domain exceptions | 📝 Contract | `DomainException`, `ValidationError` |
 
-### Infrastructure Layer
+### ⚙️ Infrastructure Layer (External)
+
 | File | Responsibility | Status | Key Components |
 |------|---------------|--------|----------------|
-| `infrastructure/persistence/redis/progress_tracker.py` | Job progress tracking | 📝 Contract | `RedisProgressTracker` |
-| `infrastructure/persistence/repositories/hvac_description_repository.py` | Redis-based storage | 📝 Contract | `HVACDescriptionRepository` |
-| `infrastructure/file_storage/file_storage_service.py` | File management | 📝 Contract | `FileStorageService` |
-| `infrastructure/file_storage/excel_reader.py` | Excel parsing (Polars) | 📝 Contract | `ExcelReaderService` |
-| `infrastructure/file_storage/excel_writer.py` | Excel generation (Polars) | 📝 Contract | `ExcelWriterService` |
-| `infrastructure/matching/matching_engine.py` | Hybrid matching implementation | 📝 Contract | `ConcreteMatchingEngine` |
+| `persistence/redis/progress_tracker.py` | Job progress tracking | 📝 Contract | `RedisProgressTracker` |
+| `persistence/repositories/hvac_description_repository.py` | Redis-based storage | 📝 Contract | `HVACDescriptionRepository` |
+| `file_storage/file_storage_service.py` | File management | 📝 Contract | `FileStorageService` |
+| `file_storage/excel_reader.py` | Excel parsing (Polars) | 📝 Contract | `ExcelReaderService` |
+| `file_storage/excel_writer.py` | Excel generation (openpyxl) | 📝 Contract | `ExcelWriterService` |
+| `matching/matching_engine.py` | Hybrid matching implementation | 📝 Contract | `HybridMatchingEngine` |
 
 ---
 
@@ -316,34 +604,35 @@ Legend:
 
 ### Prerequisites
 
-- Python 3.10+
-- Docker & Docker Compose
-- Poetry 1.5+
+- **Python 3.10+**
+- **Docker & Docker Compose**
+- **Poetry 1.5+**
+- **Git**
 
 ### Installation
 
 ```bash
-# Clone repository
+# 1. Clone repository
 git clone https://github.com/Piotr-Motyl/FastBidder3.0.git
-cd FastBidder3.0
+cd FastBidder3.0/source_code/fastbidder
 
-# Install dependencies
+# 2. Install dependencies
 make install
 
-# Copy environment template
+# 3. Copy environment template
 cp .env.example .env
 
-# Start Docker services (Redis + Celery + Flower)
+# 4. Start Docker services (Redis + Celery + Flower)
 make docker-up
 
-# Verify services
+# 5. Verify services
 make docker-health
 ```
 
-### Verification
+### ✅ Verification (under implementation)
 
 ```bash
-# Check Redis
+# Check Redis connection
 docker exec fastbidder_redis redis-cli PING
 # Expected: PONG
 
@@ -351,35 +640,39 @@ docker exec fastbidder_redis redis-cli PING
 docker exec fastbidder_celery_worker celery -A src.application.tasks inspect ping
 # Expected: celery@hostname: OK
 
-# Check Flower UI
+# Check Flower UI (Celery monitoring)
 open http://localhost:5555
+# Expected: Flower dashboard with active workers
 ```
 
 ---
 
 ## 🛠️ Development Commands
 
-All commands available via Makefile:
+All commands available via **Makefile** (14 commands):
 
-### Local Development
+### 💻 Local Development
+
 ```bash
 make install        # Install dependencies with Poetry
-make run            # Run FastAPI locally (with reload)
+make run            # Run FastAPI locally (with hot reload)
 make celery-worker  # Run Celery worker locally
-make celery-flower  # Run Flower UI locally
+make celery-flower  # Run Flower UI locally (monitoring)
 make lint           # Run linters (flake8 + mypy)
 make format         # Format code (black + isort)
-make test           # Run tests (when implemented)
+make test           # Run tests (Phase 6)
+make clean          # Clean temp files and caches
 ```
 
-### Docker Commands
+### 🐳 Docker Commands
+
 ```bash
 make docker-up      # Start all services (Redis + Celery + Flower)
 make docker-down    # Stop all services
-make docker-logs    # Show logs
+make docker-logs    # Show logs (all services)
 make docker-restart # Restart services
-make docker-health  # Health check
-make docker-test    # Run tests in Docker (when implemented)
+make docker-health  # Health check (Redis + Celery)
+make docker-test    # Run tests in Docker (Phase 6)
 ```
 
 ---
@@ -388,26 +681,29 @@ make docker-test    # Run tests in Docker (when implemented)
 
 ### Environment Variables
 
-Key variables from `.env`:
+Key variables from `.env` (see `.env.example` for full list):
 
 ```bash
-# API
+# API Configuration
 API_HOST=0.0.0.0
 API_PORT=8000
 
-# Celery
+# Celery Configuration
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/1
 
-# Redis
+# Redis Configuration
 REDIS_HOST=localhost
 REDIS_PORT=6379
+REDIS_CACHE_TTL=3600              # 1 hour cache TTL
 
-# Matching Configuration (Happy Path)
-DEFAULT_THRESHOLD=75
-PARAM_WEIGHT=0.4              # 40% parameter matching
-SEMANTIC_WEIGHT=0.6           # 60% semantic matching
-MAX_DESCRIPTIONS_PER_REQUEST=100  # Phase 1 limit
+# Matching Algorithm Configuration (Happy Path)
+DEFAULT_THRESHOLD=75.0             # Minimum match score (0-100)
+PARAM_WEIGHT=0.4                   # 40% parameter matching
+SEMANTIC_WEIGHT=0.6                # 60% semantic matching
+MAX_DESCRIPTIONS_PER_REQUEST=100   # Phase 3 initial limit
+# Note: Phase 3 starts with 100 for happy path testing
+#       Phase 5 will increase to 400 after batch processing optimization
 
 # File Processing
 MAX_FILE_SIZE_MB=10
@@ -415,134 +711,165 @@ ALLOWED_EXTENSIONS=.xlsx,.xls
 TEMP_DIR=/tmp/fastbidder
 ```
 
-### Docker Services
+### 🐳 Docker Services
 
-- **Redis**: `localhost:6379`
-- **Flower UI**: `http://localhost:5555`
-- **API**: `http://localhost:8000` (when running)
+- **Redis**: `localhost:6379` (DB 0: Celery broker, DB 1: Results)
+- **Flower UI**: `http://localhost:5555` (Celery monitoring)
+- **FastAPI**: `http://localhost:8000` (when running locally)
 
 ---
 
 ## 📊 Monitoring & Debugging
 
-### Flower UI (Celery Monitoring)
+### 🌸 Flower UI (Celery Monitoring)
+
 ```
 URL: http://localhost:5555
+
 Features:
-- View active workers
-- Monitor task progress
-- Check task history
-- Revoke/restart tasks
+✅ View active workers
+✅ Monitor task progress in real-time
+✅ Check task history (success/failure)
+✅ Revoke/restart tasks
+✅ View worker statistics
 ```
 
-### Redis CLI
+### 🔍 Redis CLI (Direct Database Access)
+
 ```bash
 # Connect to Redis
 docker exec -it fastbidder_redis redis-cli
 
 # Check job status
-GET job:3fa85f64-5717-4562-b3fc-2c963f66afa6:status
+GET progress:3fa85f64-5717-4562-b3fc-2c963f66afa6
 
 # List all job keys
-KEYS job:*
+KEYS progress:*
+
+# Check result
+GET result:3fa85f64-5717-4562-b3fc-2c963f66afa6
 ```
 
-### Logs
+### 📋 Logs
+
 ```bash
-# All services
+# All services logs
 make docker-logs
 
-# Specific service
+# Specific service logs (follow)
 docker logs fastbidder_celery_worker -f
+docker logs fastbidder_redis -f
+docker logs fastbidder_flower -f
 ```
 
 ---
 
 ## 🧪 Testing
 
-**Status:** Tests will be implemented in Phase 2.
+**Status:** Tests will be implemented in **Phase 6: Testing & Documentation**.
 
-Planned test structure:
+### Planned Test Structure
+
 ```
 tests/
-├── unit/           # Unit tests for each layer
-├── integration/    # Integration tests (Redis, Celery)
-└── e2e/           # End-to-end workflow tests
+├── unit/               # Unit tests for each layer
+│   ├── test_domain/    # Entities, Value Objects, Services
+│   ├── test_application/  # Use Cases, Commands, Queries
+│   └── test_infrastructure/  # Repository implementations
+├── integration/        # Integration tests
+│   ├── test_redis/     # Redis persistence
+│   ├── test_celery/    # Celery task execution
+│   └── test_excel/     # Excel parsing/writing
+└── e2e/               # End-to-end workflow tests
+    └── test_matching_workflow.py
 ```
 
-Run tests (when implemented):
+### Run Tests (Phase 6)
+
 ```bash
-make test           # Local
-make docker-test    # Docker
+# Local environment
+make test
+
+# Docker environment
+make docker-test
+
+# Coverage report
+make test-coverage
 ```
 
 ---
 
 ## 📚 Key Concepts
 
-### Clean Architecture
-- **Inner layers** (Domain) contain business logic
-- **Outer layers** (API, Infrastructure) handle technical details
-- **Dependency rule**: Dependencies point inward only
-- **Testability**: Inner layers have no external dependencies
+### 🏛️ Clean Architecture
 
-### CQRS Pattern
+- **Inner layers** (Domain) contain pure business logic
+- **Outer layers** (API, Infrastructure) handle technical details
+- **Dependency rule**: Dependencies point **inward** only
+- **Testability**: Inner layers have zero external dependencies
+- **Benefit**: Easy to test, maintain, and replace components
+
+### 📝 CQRS Pattern (Command Query Responsibility Segregation)
+
 - **Commands**: Write operations that modify state (`ProcessMatchingCommand`)
 - **Queries**: Read operations that return data (`GetJobStatusQuery`)
 - **Separation**: Different models for reads and writes
-- **Benefits**: Scalability, clarity, optimized for each operation
+- **Benefits**: Scalability, code clarity, optimized for each operation
 
-### Contract-First Development (Phase 1)
-1. Define interfaces and type signatures
-2. Document expected behavior
-3. Validate architecture
-4. Implement in Phase 3
+### 🔌 Protocol-based Dependency Inversion
 
-### Dependency Injection
+- **Domain defines Protocols** (interfaces)
+- **Infrastructure implements Protocols** (concrete classes)
+- **Application uses Ports** (Protocol interfaces for external services)
+- **Benefit**: Loose coupling, easy mocking for tests
+
+### 📋 Contract-First Development (Phase 1 & 2)
+
+1. ✅ Define interfaces and type signatures (Protocols)
+2. ✅ Document expected behavior (detailed docstrings)
+3. ✅ Validate architecture (code review)
+4. ⏳ Implement in Phase 3 (happy path)
+
+### 💉 Dependency Injection
+
 - Dependencies passed via constructor (not created internally)
 - Enables testing (mock dependencies)
-- Follows Dependency Inversion Principle (SOLID)
+- Follows **Dependency Inversion Principle** (SOLID)
+
+### 🧬 Domain-Driven Design (DDD)
+
+- **Entities**: Mutable objects with identity (HVACDescription)
+- **Value Objects**: Immutable objects without identity (MatchScore)
+- **Domain Services**: Business logic that doesn't fit entities (MatchingEngine)
+- **Repositories**: Data access abstraction (Protocols)
 
 ---
 
 ## 🤝 Contributing
 
-This is a personal portfolio project, but contributions are welcome!
-
-### Workflow
-1. Branch from `main`
-2. Follow phase-by-phase implementation
-3. Write contracts before implementation
-4. Use conventional commits
-5. Update this README when adding features
-
-### Commit Format
-```
-Phase X Task Y.Z: Brief description
-
-Detailed description (2 sentences max).
-
-- Key change 1
-- Key change 2
-- Key change 3
-```
+This is a **personal portfolio project**, but contributions are welcome!
 
 ---
 
 ## 📝 License
 
-This project is for portfolio purposes. All rights reserved.
+This project is for **portfolio purposes**. All rights reserved.
 
 ---
 
 ## 📞 Contact
 
-**Author:** Piotr Motyl  
-**LinkedIn:** [https://www.linkedin.com/in/piotr-motyl-634491257/](https://www.linkedin.com/in/piotr-motyl-634491257/)  
+**Author:** Piotr Motyl
+**Role:** Junior Python Developer
+**LinkedIn:** [linkedin.com/in/piotr-motyl-634491257](https://www.linkedin.com/in/piotr-motyl-634491257/)
 **GitHub:** [@Piotr-Motyl](https://github.com/Piotr-Motyl)
 
-**Project Repository:** [FastBidder3.0](https://github.com/Piotr-Motyl/FastBidder3.0)
+**Project Repository:** [github.com/Piotr-Motyl/FastBidder3.0](https://github.com/Piotr-Motyl/FastBidder3.0)
 
 ---
 
-**Last Updated:** Phase 1 - Task 1.1.4 completed (2025-01-11)
+<div align="center">
+
+**⭐ If you find this project interesting, please consider giving it a star! ⭐**
+
+</div>
