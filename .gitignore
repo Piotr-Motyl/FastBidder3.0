@@ -39,5 +39,6 @@ CLAUDE.md
 .claude/
 
 # Implementation plan
-implementation_plan.md
+IMPL_PLAN.md
+IMPL_PROMPT.md
 ROADMAP.md
