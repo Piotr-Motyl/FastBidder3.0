@@ -7,10 +7,30 @@ It is expressed in bar and follows ISO/EN standards.
 This is an immutable Value Object following DDD principles.
 """
 
+import re
 from dataclasses import dataclass
 from typing import Final
 
 from src.domain.shared.exceptions import InvalidPNValueError
+
+
+# ============================================================================
+# MODULE-LEVEL CONSTANTS (compiled once for performance)
+# ============================================================================
+
+# Standard PN notation: PN16, pn16, PN 16, PN-16, PN=16
+PN_STANDARD_PATTERN: Final[re.Pattern] = re.compile(r"PN[=\s-]?(\d+)", re.IGNORECASE)
+
+# PN with unit: "16 bar", "16bar", "16 Bar"
+PN_BAR_PATTERN: Final[re.Pattern] = re.compile(r"(\d+)\s*bar", re.IGNORECASE)
+
+# PN in context: "ciśnienie 16", "pressure 16", "ciśnienie: 16"
+PN_CONTEXT_PATTERN: Final[re.Pattern] = re.compile(
+    r"(?:ciśnienie|pressure)[:\s]+(\d+)", re.IGNORECASE
+)
+
+# Numeric only pattern (last resort): "16", " 25 "
+PN_NUMERIC_PATTERN: Final[re.Pattern] = re.compile(r"^(\d+)$")
 
 
 @dataclass(frozen=True)
@@ -95,9 +115,76 @@ class PressureNominal:
             >>> PressureNominal.from_string("pn 40")
             PressureNominal(value=40)
         """
-        # Implementation will be in Phase 3
-        # Contract: Parse various PN formats and return PressureNominal instance
-        raise NotImplementedError("Implementation in Phase 3")
+        # Validate input type
+        if not isinstance(text, str):
+            raise InvalidPNValueError(
+                "Cannot parse PN from empty or non-string input",
+                original_value=str(text) if text is not None else None,
+            )
+
+        # Normalize: strip whitespace
+        text = text.strip()
+
+        # Check if empty after strip
+        if not text:
+            raise InvalidPNValueError(
+                "Cannot parse PN from empty string", original_value=text
+            )
+
+        # Try standard PN format (PN16, pn16, PN 16, PN-16, PN=16)
+        match = PN_STANDARD_PATTERN.search(text)
+        if match:
+            try:
+                pn_value = int(match.group(1))
+                return cls(pn_value)
+            except (ValueError, InvalidPNValueError) as e:
+                raise InvalidPNValueError(
+                    f"Invalid PN value in standard format: {match.group(1)}",
+                    original_value=text,
+                ) from e
+
+        # Try PN with unit (16 bar, 16bar, 16 Bar)
+        match = PN_BAR_PATTERN.search(text)
+        if match:
+            try:
+                pn_value = int(match.group(1))
+                return cls(pn_value)
+            except (ValueError, InvalidPNValueError) as e:
+                raise InvalidPNValueError(
+                    f"Invalid PN value in bar format: {match.group(1)}",
+                    original_value=text,
+                ) from e
+
+        # Try context pattern (ciśnienie 16, pressure 16)
+        match = PN_CONTEXT_PATTERN.search(text)
+        if match:
+            try:
+                pn_value = int(match.group(1))
+                return cls(pn_value)
+            except (ValueError, InvalidPNValueError) as e:
+                raise InvalidPNValueError(
+                    f"Invalid PN value in context format: {match.group(1)}",
+                    original_value=text,
+                ) from e
+
+        # Try numeric only (last resort, matches whole string only)
+        match = PN_NUMERIC_PATTERN.match(text)
+        if match:
+            try:
+                pn_value = int(match.group(1))
+                return cls(pn_value)
+            except (ValueError, InvalidPNValueError) as e:
+                raise InvalidPNValueError(
+                    f"Invalid PN value in numeric format: {match.group(1)}",
+                    original_value=text,
+                ) from e
+
+        # If no pattern matched, raise error
+        raise InvalidPNValueError(
+            f"Cannot parse PN from text: '{text}'. "
+            f"Supported formats: PN16, 16 bar, ciśnienie 16, 16, etc.",
+            original_value=text,
+        )
 
     def to_string(self) -> str:
         """
