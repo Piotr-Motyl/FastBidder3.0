@@ -143,6 +143,38 @@ class ExtractedParameters:
 
         return sum(self.confidence_scores.values()) / len(self.confidence_scores)
 
+    def is_empty(self) -> bool:
+        """
+        Check if all parameters are None (no extraction results).
+
+        Returns:
+            True if all parameters are None, False otherwise
+
+        Business Logic:
+            Empty extraction means extraction failed completely or text had no HVAC content.
+            This is different from has_parameters() which checks if ANY parameter exists.
+
+        Examples:
+            >>> params = ExtractedParameters()
+            >>> params.is_empty()
+            True
+
+            >>> params = ExtractedParameters(dn=50)
+            >>> params.is_empty()
+            False
+        """
+        return all(
+            [
+                self.dn is None,
+                self.pn is None,
+                self.valve_type is None,
+                self.material is None,
+                self.drive_type is None,
+                self.voltage is None,
+                self.manufacturer is None,
+            ]
+        )
+
     def to_dict(self) -> Dict[str, Any]:
         """
         Convert to dictionary for serialization/logging.
@@ -166,3 +198,45 @@ class ExtractedParameters:
             "has_critical_parameters": self.has_critical_parameters(),
             "average_confidence": self.get_average_confidence(),
         }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ExtractedParameters":
+        """
+        Create ExtractedParameters from dictionary (deserialization).
+
+        Args:
+            data: Dictionary containing parameter values and confidence scores
+
+        Returns:
+            ExtractedParameters instance
+
+        Usage:
+            For deserializing from JSON, database, or other storage
+
+        Examples:
+            >>> data = {
+            ...     "dn": 50,
+            ...     "pn": 16,
+            ...     "valve_type": "kulowy",
+            ...     "confidence_scores": {"dn": 1.0, "pn": 1.0}
+            ... }
+            >>> params = ExtractedParameters.from_dict(data)
+            >>> params.dn
+            50
+
+        Note:
+            Ignores computed fields (has_parameters, has_critical_parameters, average_confidence)
+            from to_dict() output as these are derived properties.
+        """
+        # Extract only fields that are part of the dataclass
+        # Ignore computed fields from to_dict() output
+        return cls(
+            dn=data.get("dn"),
+            pn=data.get("pn"),
+            valve_type=data.get("valve_type"),
+            material=data.get("material"),
+            drive_type=data.get("drive_type"),
+            voltage=data.get("voltage"),
+            manufacturer=data.get("manufacturer"),
+            confidence_scores=data.get("confidence_scores", {}),
+        )
