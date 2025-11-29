@@ -43,8 +43,7 @@ DN_WORD_PATTERN: Pattern = re.compile(
     (?:średnica|diameter|srednica)  # Word for diameter (PL/EN)
     \s+                             # Required whitespace
     (\d{1,4})                       # Capture DN value
-    \s*                             # Optional whitespace
-    mm?                             # Optional mm unit
+    (?:\s*(?:mm?))?                 # Optional: whitespace + mm/m unit (bugfix: was mm?)
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -113,6 +112,112 @@ VOLTAGE_PATTERN: Pattern = re.compile(
     """,
     re.IGNORECASE | re.VERBOSE,
 )
+
+
+# ============================================================================
+# HELPER FUNCTIONS FOR TEXT NORMALIZATION
+# ============================================================================
+
+
+def normalize_text(text: str) -> str:
+    """
+    Normalize text for consistent matching.
+
+    Applies the following transformations:
+    - Convert to lowercase
+    - Strip leading/trailing whitespace
+    - Replace multiple spaces with single space
+    - Remove extra whitespace around punctuation
+
+    Args:
+        text: Input text to normalize
+
+    Returns:
+        Normalized text
+
+    Examples:
+        >>> normalize_text("  ZAWÓR  KULOWY  DN50  ")
+        "zawór kulowy dn50"
+        >>> normalize_text("Valve   with   spaces")
+        "valve with spaces"
+
+    Usage:
+        Used before pattern matching to ensure consistent results
+        regardless of input formatting variations.
+    """
+    if not text:
+        return ""
+
+    # Convert to lowercase
+    normalized = text.lower()
+
+    # Strip leading/trailing whitespace
+    normalized = normalized.strip()
+
+    # Replace multiple spaces with single space
+    normalized = " ".join(normalized.split())
+
+    return normalized
+
+
+def find_canonical_form(
+    text: str, dictionary: dict[str, list[str]]
+) -> tuple[str | None, float]:
+    """
+    Find canonical form of a term using dictionary with synonyms.
+
+    Searches for a term in a dictionary where keys are canonical forms
+    and values are lists of synonyms. Returns the canonical form and
+    a confidence score.
+
+    Args:
+        text: Text to search for (will be normalized)
+        dictionary: Dict mapping canonical forms to lists of synonyms
+                   Format: {"canonical": ["synonym1", "synonym2", ...]}
+
+    Returns:
+        Tuple of (canonical_form, confidence_score)
+        - canonical_form: Canonical form if found, None otherwise
+        - confidence_score:
+            * 1.0 for exact match with canonical form
+            * 0.9 for synonym match
+            * 0.0 if not found
+
+    Examples:
+        >>> valve_dict = {
+        ...     "kulowy": ["kurek kulowy", "zawór kulowy"],
+        ...     "zwrotny": ["klapka zwrotna", "zawór zwrotny"]
+        ... }
+        >>> find_canonical_form("zawór kulowy", valve_dict)
+        ("kulowy", 0.9)
+        >>> find_canonical_form("kulowy", valve_dict)
+        ("kulowy", 1.0)
+        >>> find_canonical_form("nieznany", valve_dict)
+        (None, 0.0)
+
+    Business Logic:
+        Higher confidence (1.0) for exact canonical matches,
+        slightly lower (0.9) for synonyms to indicate indirect match.
+    """
+    if not text or not dictionary:
+        return None, 0.0
+
+    # Normalize input text
+    normalized_text = normalize_text(text)
+
+    # Search for exact match with canonical form (highest confidence)
+    for canonical in dictionary.keys():
+        if normalize_text(canonical) == normalized_text:
+            return canonical, 1.0
+
+    # Search for synonym match (slightly lower confidence)
+    for canonical, synonyms in dictionary.items():
+        for synonym in synonyms:
+            if normalize_text(synonym) == normalized_text:
+                return canonical, 0.9
+
+    # Not found
+    return None, 0.0
 
 
 # ============================================================================

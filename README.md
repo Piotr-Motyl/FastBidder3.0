@@ -69,10 +69,21 @@ This project demonstrates production-grade architecture principles: **Clean Arch
 - [x] Sprint 2.4: API & Infrastructure - detailed contracts finalization
 
 **Phase 3: Implementation (Happy Path)** ⏳ **IN PROGRESS**
+
+**Sprint 3.1: Core Value Objects** ✅ **COMPLETED**
 - [x] Task 3.1.1: DiameterNominal (DN) Value Object implementation (98% coverage, 60 tests)
 - [x] Task 3.1.2: PressureNominal (PN) Value Object implementation (90% coverage, 42 tests)
 - [x] Task 3.1.3: ExtractedParameters implementation (100% coverage, 43 tests)
 - [x] Task 3.1.4: MatchScore & MatchResult implementation (100% coverage, 52 tests)
+
+**Sprint 3.2: Domain Services & Helpers** ⏳ **IN PROGRESS**
+- [x] Task 3.2.1: Regex Patterns & Domain Dictionaries (95% coverage, 61 tests)
+- [x] Task 3.2.2: ConcreteParameterExtractor implementation (100% coverage, 53 tests)
+- [ ] Task 3.2.3: SimpleMatchingEngine implementation
+
+**Sprint 3.3: Entities & Config** ✅ **COMPLETED**
+- [x] Task 3.3.1: HVACDescription Entity implementation (99% coverage, 42 tests)
+- [x] Task 3.3.2: MatchingConfig implementation (100% coverage, 19 tests)
 
 ### 📋 Phases Overview
 
@@ -80,13 +91,13 @@ This project demonstrates production-grade architecture principles: **Clean Arch
 Phase 0: Setup                ✅ Done
 Phase 1: High-Level Contracts ✅ Done
 Phase 2: Detailed Contracts   ✅ Done
-Phase 3: Implementation       ⏳ In Progress (Sprint 3.1: Core Value Objects)
+Phase 3: Implementation       ⏳ In Progress (Sprint 3.3: Entities & Config)
 Phase 4: AI Integration       ⏳ Pending (Semantic matching)
 Phase 5: Advanced Features    ⏳ Pending (Batch, optimization)
 Phase 6: Testing & Docs       ⏳ Pending (Unit, integration, E2E)
 ```
 
-**Next Steps:** Sprint 3.1 completed! Start Sprint 3.2 (Domain Services & Entities)
+**Next Steps:** Continue Sprint 3.3 (MatchingConfig), Sprint 3.2 (SimpleMatchingEngine)
 
 ---
 
@@ -593,6 +604,8 @@ Legend:
 | `services/parameter_extractor.py` | Parameter extraction Protocol | 📝 Contract | `ParameterExtractorProtocol` |
 | `services/simple_matching_engine.py` | Fallback matching engine | 📝 Contract | `SimpleMatchingEngine` |
 | `repositories/hvac_description_repository.py` | Repository Protocol | 📝 Contract | `HVACDescriptionRepositoryProtocol` |
+| `patterns.py` | Regex patterns & text helpers | ✅ Implemented | `normalize_text()`, `find_canonical_form()` (95% coverage) |
+| `constants.py` | Domain dictionaries & constants | ✅ Implemented | `VALVE_TYPES`, `MATERIALS`, `DRIVE_TYPES`, `MANUFACTURERS` |
 | `shared/exceptions.py` | Domain exceptions | 📝 Contract | `DomainException`, `ValidationError` |
 
 ### ⚙️ Infrastructure Layer (External)

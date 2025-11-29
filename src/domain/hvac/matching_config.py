@@ -181,6 +181,7 @@ class MatchingConfig:
         hybrid_param_weight: Weight for parameter score in final calculation (0.4)
         hybrid_semantic_weight: Weight for semantic score in final calculation (0.6)
         default_threshold: Minimum score for accepting a match (75.0)
+        min_score_gap_for_high_confidence: Minimum score gap to second-best for high confidence (10.0)
         enable_fast_fail: Whether to use fast-fail optimization (True)
         semantic_placeholder: Placeholder value for semantic score in Phase 2/3 (0.5)
 
@@ -193,6 +194,7 @@ class MatchingConfig:
     hybrid_param_weight: float = WEIGHT_PARAMETERS
     hybrid_semantic_weight: float = WEIGHT_SEMANTIC
     default_threshold: float = DEFAULT_THRESHOLD
+    min_score_gap_for_high_confidence: float = MIN_SCORE_GAP_FOR_HIGH_CONFIDENCE
     enable_fast_fail: bool = ENABLE_FAST_FAIL
     semantic_placeholder: float = SEMANTIC_PLACEHOLDER_VALUE
 
@@ -208,16 +210,110 @@ class MatchingConfig:
 
     @classmethod
     def default(cls) -> "MatchingConfig":
-        """Get default configuration from module constants"""
+        """
+        Get default configuration from module constants.
+
+        Returns default configuration suitable for production use.
+
+        Returns:
+            MatchingConfig with all default values
+
+        Examples:
+            >>> config = MatchingConfig.default()
+            >>> config.hybrid_param_weight
+            0.4
+            >>> config.default_threshold
+            75.0
+        """
         return cls()
 
+    @classmethod
+    def for_testing(cls, **overrides: Any) -> "MatchingConfig":
+        """
+        Create configuration with custom overrides for testing.
+
+        Allows partial override of default values while keeping others at defaults.
+        Useful for unit tests that need specific configuration scenarios.
+
+        Args:
+            **overrides: Keyword arguments to override default values
+                Valid keys: parameter_weights, hybrid_param_weight, hybrid_semantic_weight,
+                           default_threshold, min_score_gap_for_high_confidence,
+                           enable_fast_fail, semantic_placeholder
+
+        Returns:
+            MatchingConfig with specified overrides applied
+
+        Raises:
+            ValueError: If hybrid weights don't sum to 1.0 after overrides
+
+        Examples:
+            >>> # Test with higher threshold
+            >>> config = MatchingConfig.for_testing(default_threshold=90.0)
+            >>> config.default_threshold
+            90.0
+
+            >>> # Test with disabled fast-fail
+            >>> config = MatchingConfig.for_testing(enable_fast_fail=False)
+            >>> config.enable_fast_fail
+            False
+
+            >>> # Test with custom parameter weights
+            >>> custom_weights = ParameterWeights(
+            ...     dn=0.5, pn=0.2, valve_type=0.1,
+            ...     material=0.1, drive_type=0.05,
+            ...     voltage=0.03, manufacturer=0.02
+            ... )
+            >>> config = MatchingConfig.for_testing(parameter_weights=custom_weights)
+            >>> config.parameter_weights.dn
+            0.5
+
+        Business Logic:
+            This factory is designed for test scenarios only. Production code
+            should use `default()` to ensure consistent configuration.
+
+        Architecture Note:
+            Using kwargs allows forward compatibility - tests won't break
+            if new config fields are added in future phases.
+        """
+        # Start with defaults
+        defaults = {
+            "parameter_weights": ParameterWeights.default(),
+            "hybrid_param_weight": WEIGHT_PARAMETERS,
+            "hybrid_semantic_weight": WEIGHT_SEMANTIC,
+            "default_threshold": DEFAULT_THRESHOLD,
+            "min_score_gap_for_high_confidence": MIN_SCORE_GAP_FOR_HIGH_CONFIDENCE,
+            "enable_fast_fail": ENABLE_FAST_FAIL,
+            "semantic_placeholder": SEMANTIC_PLACEHOLDER_VALUE,
+        }
+
+        # Apply overrides
+        defaults.update(overrides)
+
+        # Create instance (will run __post_init__ validation)
+        return cls(**defaults)
+
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for serialization/logging"""
+        """
+        Convert to dictionary for serialization/logging.
+
+        Returns:
+            Dictionary representation of configuration
+
+        Examples:
+            >>> config = MatchingConfig.default()
+            >>> data = config.to_dict()
+            >>> data['hybrid_param_weight']
+            0.4
+            >>> 'parameter_weights' in data
+            True
+        """
         return {
             "parameter_weights": self.parameter_weights.to_dict(),
             "hybrid_param_weight": self.hybrid_param_weight,
             "hybrid_semantic_weight": self.hybrid_semantic_weight,
             "default_threshold": self.default_threshold,
+            "min_score_gap_for_high_confidence": self.min_score_gap_for_high_confidence,
             "enable_fast_fail": self.enable_fast_fail,
             "semantic_placeholder": self.semantic_placeholder,
         }
