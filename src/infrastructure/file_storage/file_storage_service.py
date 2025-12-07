@@ -29,7 +29,6 @@ from typing import Optional
 from uuid import UUID
 
 from src.domain.shared.exceptions import (
-    ColumnNotFoundError,
     ExcelParsingError,
     FileSizeExceededError,
 )
@@ -189,10 +188,16 @@ class FileStorageService:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3.
         """
-        raise NotImplementedError(
-            "file_exists() to be implemented in Phase 3. "
-            "Will check if specific file exists in job's input or output directory."
-        )
+        # Get full file path using helper method
+        file_path = self.get_file_path(job_id, file_type)
+
+        # Check if file exists
+        exists = file_path.exists()
+
+        # Log existence check
+        logger.debug(f"Checking file existence: {file_path} -> {exists}")
+
+        return exists
 
     async def get_file_metadata(
         self, job_id: UUID, file_type: str  # "working" or "reference" or "result"
@@ -260,10 +265,41 @@ class FileStorageService:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3.
         """
-        raise NotImplementedError(
-            "get_file_metadata() to be implemented in Phase 3. "
-            "Will retrieve file size, format, timestamps, and other metadata."
-        )
+        # Check if file exists
+        if not await self.file_exists(job_id, file_type):
+            raise FileNotFoundError(
+                f"File not found for job_id={job_id}, file_type={file_type}"
+            )
+
+        # Get file path
+        file_path = self.get_file_path(job_id, file_type)
+
+        # Get file stats
+        stat_result = file_path.stat()
+
+        # Extract metadata
+        size = stat_result.st_size
+        size_mb = round(size / (1024 * 1024), 2)
+        format_ext = file_path.suffix.lstrip(".")  # Remove leading dot
+
+        # Convert timestamps to ISO format
+        created_at = datetime.fromtimestamp(stat_result.st_ctime).isoformat()
+        modified_at = datetime.fromtimestamp(stat_result.st_mtime).isoformat()
+
+        # Log metadata retrieval
+        logger.debug(f"Retrieved metadata for {file_type}: {size_mb:.2f}MB")
+
+        # Return metadata dictionary
+        return {
+            "size": size,
+            "size_mb": size_mb,
+            "format": format_ext,
+            "exists": True,
+            "created_at": created_at,
+            "modified_at": modified_at,
+            "file_type": file_type,
+            "file_path": str(file_path),
+        }
 
     def _validate_extension(self, filename: str) -> bool:
         """
@@ -413,10 +449,40 @@ class FileStorageService:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3.
         """
-        raise NotImplementedError(
-            "upload_file() to be implemented in Phase 3. "
-            "Will validate extension/size and save file to input subdirectory."
-        )
+        # Validate file extension
+        if not self._validate_extension(filename):
+            raise ValueError(
+                f"Invalid extension: {filename}. Allowed: {self.allowed_extensions}"
+            )
+
+        # Validate file size
+        if not self._validate_size(file_data):
+            raise FileSizeExceededError(
+                f"File size {len(file_data)} bytes exceeds "
+                f"maximum allowed size {self.max_size_bytes} bytes"
+            )
+
+        # Get subdirectory and filename
+        subdir = self._get_subdirectory(file_type)  # "input"
+        target_filename = self._get_filename_for_type(file_type)
+
+        # Construct directory and file paths
+        dir_path = self.base_dir / str(job_id) / subdir
+        file_path = dir_path / target_filename
+
+        # Ensure directory exists
+        self._ensure_directory_exists(dir_path)
+
+        # Write file data (direct write for input files)
+        file_path.write_bytes(file_data)
+
+        # Set file permissions (rw-r--r--)
+        self._set_permissions(file_path, mode=0o644)
+
+        # Log successful upload
+        logger.info(f"Uploaded {file_type} file: {file_path} ({len(file_data)} bytes)")
+
+        return file_path
 
     def get_file_path(
         self, job_id: UUID, file_type: str  # "working" or "reference" or "result"
@@ -481,10 +547,16 @@ class FileStorageService:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3.
         """
-        raise NotImplementedError(
-            "get_file_path() to be implemented in Phase 3. "
-            "Will construct path to file based on job_id, file_type, and subdirectory structure."
-        )
+        # Get subdirectory (input or output)
+        subdir = self._get_subdirectory(file_type)
+
+        # Get standardized filename
+        filename = self._get_filename_for_type(file_type)
+
+        # Construct full path: {base_dir}/{job_id}/{subdir}/{filename}
+        file_path = self.base_dir / str(job_id) / subdir / filename
+
+        return file_path
 
     async def cleanup_job(self, job_id: UUID) -> None:
         """
@@ -554,10 +626,19 @@ class FileStorageService:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3.
         """
-        raise NotImplementedError(
-            "cleanup_job() to be implemented in Phase 3. "
-            "Will delete entire job directory and all files within using shutil.rmtree()."
-        )
+        # Get job directory path
+        job_dir = self._get_job_dir(job_id)
+
+        # Check if directory exists
+        if not job_dir.exists():
+            logger.warning(f"Job directory not found for cleanup: {job_id}")
+            return
+
+        # Hard delete: recursively remove directory and all contents
+        shutil.rmtree(job_dir)
+
+        # Log successful cleanup
+        logger.info(f"Cleaned up job directory: {job_id}")
 
     async def cleanup_old_jobs(self, hours: int = 24) -> int:
         """
@@ -627,10 +708,44 @@ class FileStorageService:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3.
         """
-        raise NotImplementedError(
-            "cleanup_old_jobs() to be implemented in Phase 3. "
-            "Will scan job directories and delete those older than threshold."
-        )
+        cleaned_count = 0
+
+        # Scan all subdirectories in base directory
+        if not self.base_dir.exists():
+            logger.warning(f"Base directory does not exist: {self.base_dir}")
+            return 0
+
+        for job_dir in self.base_dir.iterdir():
+            # Skip non-directories (e.g., files)
+            if not job_dir.is_dir():
+                continue
+
+            # Skip "uploads" directory (not a job directory)
+            if job_dir.name == "uploads":
+                continue
+
+            # Check if directory is old enough for cleanup
+            if self._is_directory_old(job_dir, hours):
+                try:
+                    # Parse directory name as UUID
+                    job_id = UUID(job_dir.name)
+
+                    # Delete job directory
+                    await self.cleanup_job(job_id)
+                    cleaned_count += 1
+
+                except ValueError:
+                    # Not a valid UUID directory name, skip
+                    logger.warning(f"Skipping non-UUID directory: {job_dir.name}")
+
+                except OSError as e:
+                    # Deletion failed, log and continue with next directory
+                    logger.error(f"Failed to cleanup {job_dir.name}: {e}")
+
+        # Log cleanup summary
+        logger.info(f"Cleaned up {cleaned_count} jobs older than {hours} hours")
+
+        return cleaned_count
 
     # ========================================
     # Upload Endpoint Methods (Phase 2 - Task 2.4.1)
@@ -716,10 +831,41 @@ class FileStorageService:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3.
         """
-        raise NotImplementedError(
-            "save_uploaded_file() to be implemented in Phase 3. "
-            "Will validate and save file to /tmp/fastbidder/uploads/{file_id}/ directory."
+        # Validate file extension
+        if not self._validate_extension(filename):
+            raise ValueError(
+                f"Invalid extension: {filename}. Allowed: {self.allowed_extensions}"
+            )
+
+        # Validate file size
+        if not self._validate_size(file_data):
+            raise FileSizeExceededError(
+                f"File size {len(file_data)} bytes exceeds "
+                f"maximum allowed size {self.max_size_bytes} bytes"
+            )
+
+        # Construct upload directory path
+        upload_dir = self.base_dir / "uploads" / str(file_id)
+
+        # Ensure upload directory exists
+        self._ensure_directory_exists(upload_dir)
+
+        # Construct file path (preserve original filename)
+        file_path = upload_dir / filename
+
+        # Write file data to disk (direct write for uploads)
+        file_path.write_bytes(file_data)
+
+        # Set file permissions (rw-r--r--)
+        self._set_permissions(file_path, mode=0o644)
+
+        # Log successful upload
+        logger.info(
+            f"Saved uploaded file: {filename} ({len(file_data)} bytes) "
+            f"to uploads/{file_id}/"
         )
+
+        return file_path
 
     async def extract_file_metadata(self, file_path: Path) -> dict:
         """
@@ -812,10 +958,59 @@ class FileStorageService:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3.
         """
-        raise NotImplementedError(
-            "extract_file_metadata() to be implemented in Phase 3. "
-            "Will use polars and openpyxl to extract Excel metadata (sheets, rows, columns, size)."
+        # Validate file exists
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        # Get file stats
+        stat_result = file_path.stat()
+        size = stat_result.st_size
+        size_mb = round(size / (1024 * 1024), 2)
+        created_at = datetime.fromtimestamp(stat_result.st_ctime).isoformat()
+        filename = file_path.name
+
+        try:
+            # Import openpyxl for Excel metadata extraction
+            from openpyxl import load_workbook
+
+            # Use openpyxl to get all metadata (more reliable than polars for metadata)
+            wb = load_workbook(file_path, read_only=True, data_only=True)
+
+            # Get first sheet
+            first_sheet = wb.worksheets[0]
+
+            # Get sheet count
+            sheets_count = len(wb.sheetnames)
+
+            # Get row and column count from first sheet
+            rows_count = first_sheet.max_row
+            columns_count = first_sheet.max_column
+
+            wb.close()
+
+        except Exception as e:
+            raise ExcelParsingError(f"Failed to parse Excel file: {e}")
+
+        # Validate sheets count
+        if sheets_count == 0:
+            raise ValueError("Excel file has no sheets")
+
+        # Log metadata extraction
+        logger.debug(
+            f"Extracted metadata: {filename} - {sheets_count} sheets, "
+            f"{rows_count}x{columns_count}, {size_mb:.2f}MB"
         )
+
+        # Return metadata dictionary
+        return {
+            "filename": filename,
+            "size": size,
+            "size_mb": size_mb,
+            "sheets_count": sheets_count,
+            "rows_count": rows_count,
+            "columns_count": columns_count,
+            "created_at": created_at,
+        }
 
     async def extract_file_preview(
         self, file_path: Path, rows: int = 5
@@ -902,10 +1097,70 @@ class FileStorageService:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3.
         """
-        raise NotImplementedError(
-            "extract_file_preview() to be implemented in Phase 3. "
-            "Will use polars to read first N rows from Excel and convert to list of dicts."
-        )
+        # Validate file exists
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        try:
+            # Import openpyxl for Excel reading
+            from openpyxl import load_workbook
+
+            # Use openpyxl to extract preview (more reliable than polars for small reads)
+            wb = load_workbook(file_path, read_only=True, data_only=True)
+
+            # Get first sheet
+            first_sheet = wb.worksheets[0]
+
+            # Get all rows as iterator (memory-efficient)
+            rows_iter = first_sheet.iter_rows(values_only=True)
+
+            # Extract header row (first row)
+            header_row = next(rows_iter, None)
+
+            if header_row is None:
+                wb.close()
+                logger.debug(f"Extracted preview: 0 rows from {file_path.name} (empty file)")
+                return []
+
+            # Convert header row to list of column names
+            # Handle None values in headers (use column letter as fallback)
+            headers = []
+            for idx, cell_value in enumerate(header_row):
+                if cell_value is not None:
+                    headers.append(str(cell_value))
+                else:
+                    # Use Excel column letter as fallback (A, B, C, ...)
+                    from openpyxl.utils import get_column_letter
+                    headers.append(get_column_letter(idx + 1))
+
+            # Extract data rows (up to N rows after header)
+            preview_rows = []
+            for row_idx, row_values in enumerate(rows_iter):
+                if row_idx >= rows:
+                    break  # Reached requested limit
+
+                # Convert row to dict using headers
+                row_dict = {}
+                for col_idx, cell_value in enumerate(row_values):
+                    if col_idx < len(headers):
+                        row_dict[headers[col_idx]] = cell_value
+
+                preview_rows.append(row_dict)
+
+            wb.close()
+
+        except Exception as e:
+            raise ExcelParsingError(f"Failed to read Excel file: {e}")
+
+        # Handle empty data (only header, no data rows)
+        if len(preview_rows) == 0:
+            logger.debug(f"Extracted preview: 0 rows from {file_path.name} (no data rows)")
+            return []
+
+        # Log preview extraction
+        logger.debug(f"Extracted preview: {len(preview_rows)} rows from {file_path.name}")
+
+        return preview_rows
 
     # ========================================
     # Result File Methods (Phase 2 - Task 2.4.4)
@@ -962,10 +1217,12 @@ class FileStorageService:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3.
         """
-        raise NotImplementedError(
-            "get_result_file_path() to be implemented in Phase 3. "
-            "Will return Path to {job_id}/output/result.xlsx."
-        )
+        # Use get_file_path() for consistency
+        result_path = self.get_file_path(job_id, "result")
+
+        logger.debug(f"Result file path for job {job_id}: {result_path}")
+
+        return result_path
 
     def result_file_exists(self, job_id: UUID) -> bool:
         """
@@ -1016,10 +1273,16 @@ class FileStorageService:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3.
         """
-        raise NotImplementedError(
-            "result_file_exists() to be implemented in Phase 3. "
-            "Will check if {job_id}/output/result.xlsx exists."
-        )
+        # Get result file path
+        result_path = self.get_result_file_path(job_id)
+
+        # Check if file exists
+        exists = result_path.exists()
+
+        # Log existence check
+        logger.debug(f"Result file exists check for job {job_id}: {exists}")
+
+        return exists
 
     # ========================================
     # Helper Methods (Phase 2 - Detailed Contracts)
@@ -1064,10 +1327,16 @@ class FileStorageService:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3.
         """
-        raise NotImplementedError(
-            "_get_subdirectory() to be implemented in Phase 3. "
-            "Will map file_type to subdirectory (input/output)."
-        )
+        # Map file types to subdirectory names
+        if file_type in ("working", "reference"):
+            return "input"
+        elif file_type == "result":
+            return "output"
+        else:
+            raise ValueError(
+                f"Unknown file_type: '{file_type}'. "
+                f"Expected 'working', 'reference', or 'result'."
+            )
 
     def _get_filename_for_type(self, file_type: str) -> str:
         """
@@ -1114,10 +1383,20 @@ class FileStorageService:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3.
         """
-        raise NotImplementedError(
-            "_get_filename_for_type() to be implemented in Phase 3. "
-            "Will map file_type to standardized filename."
-        )
+        # Map file types to standardized filenames
+        mapping = {
+            "working": "working_file.xlsx",
+            "reference": "reference_file.xlsx",
+            "result": "result.xlsx",
+        }
+
+        if file_type not in mapping:
+            raise ValueError(
+                f"Unknown file_type: '{file_type}'. "
+                f"Expected 'working', 'reference', or 'result'."
+            )
+
+        return mapping[file_type]
 
     def _ensure_directory_exists(self, dir_path: Path) -> None:
         """
@@ -1157,10 +1436,18 @@ class FileStorageService:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3.
         """
-        raise NotImplementedError(
-            "_ensure_directory_exists() to be implemented in Phase 3. "
-            "Will create directory with mkdir -p behavior and set permissions."
-        )
+        # Check if directory already exists
+        if dir_path.exists():
+            return  # Already exists, nothing to do
+
+        # Create directory with parent directories (mkdir -p behavior)
+        dir_path.mkdir(parents=True, exist_ok=True)
+
+        # Set permissions to 755 (drwxr-xr-x)
+        self._set_permissions(dir_path, mode=0o755)
+
+        # Log directory creation
+        logger.debug(f"Created directory: {dir_path}")
 
     def _set_permissions(self, path: Path, mode: int) -> None:
         """
@@ -1201,10 +1488,14 @@ class FileStorageService:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3.
         """
-        raise NotImplementedError(
-            "_set_permissions() to be implemented in Phase 3. "
-            "Will set file permissions with cross-platform try/except handling."
-        )
+        # Try to set permissions (cross-platform handling)
+        try:
+            os.chmod(path, mode)
+            logger.debug(f"Set permissions {oct(mode)} on {path}")
+        except (OSError, NotImplementedError):
+            # Windows may not support chmod for all modes
+            # Log but don't fail the entire operation
+            logger.debug(f"Could not set permissions on {path} (Windows or unsupported filesystem)")
 
     def _atomic_write_file(self, file_path: Path, data: bytes) -> None:
         """
@@ -1260,10 +1551,21 @@ class FileStorageService:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3.
         """
-        raise NotImplementedError(
-            "_atomic_write_file() to be implemented in Phase 3. "
-            "Will write file atomically using .tmp and rename pattern."
-        )
+        # Construct temporary file path (e.g., result.xlsx.tmp)
+        tmp_path = file_path.with_suffix(file_path.suffix + ".tmp")
+
+        # Write data to temporary file
+        tmp_path.write_bytes(data)
+
+        # Set permissions on temporary file (rw-r--r--)
+        self._set_permissions(tmp_path, mode=0o644)
+
+        # Atomic rename: On Windows, use replace() to overwrite if needed
+        # On Unix, rename() is atomic
+        tmp_path.replace(file_path)
+
+        # Log atomic write operation
+        logger.debug(f"Atomic write: {len(data)} bytes to {file_path}")
 
     def _is_directory_old(self, dir_path: Path, hours: int) -> bool:
         """
@@ -1307,7 +1609,16 @@ class FileStorageService:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3.
         """
-        raise NotImplementedError(
-            "_is_directory_old() to be implemented in Phase 3. "
-            "Will check directory mtime against threshold."
-        )
+        # Check if directory exists
+        if not dir_path.exists():
+            return False  # Doesn't exist, can't be old
+
+        # Get directory modification time
+        stat_result = dir_path.stat()
+        mtime = stat_result.st_mtime  # Last modification time (Unix timestamp)
+
+        # Calculate cutoff timestamp (current time - threshold)
+        cutoff_timestamp = time.time() - (hours * 3600)
+
+        # Directory is old if mtime is before cutoff
+        return mtime < cutoff_timestamp

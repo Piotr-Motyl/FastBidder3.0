@@ -94,7 +94,57 @@ class ExcelReaderService:
         # Cache key: (file_path as string, sheet_name)
         self._dataframe_cache: dict[tuple[str, str], pl.DataFrame] = {}
 
-    async def read_descriptions(
+    @staticmethod
+    def _column_letter_to_index(column: str) -> int:
+        """
+        Convert Excel column letter to 0-based DataFrame index.
+
+        Converts Excel column notation (A, B, AA, ZZ) to 0-based integer index
+        for DataFrame column access.
+
+        Args:
+            column: Excel column letter (uppercase, e.g., "A", "B", "AA", "ZZ")
+
+        Returns:
+            0-based column index (A=0, B=1, Z=25, AA=26, etc.)
+
+        Raises:
+            ValueError: If column contains non-alphabetic characters
+
+        Examples:
+            >>> ExcelReaderService._column_letter_to_index("A")
+            0
+            >>> ExcelReaderService._column_letter_to_index("B")
+            1
+            >>> ExcelReaderService._column_letter_to_index("Z")
+            25
+            >>> ExcelReaderService._column_letter_to_index("AA")
+            26
+            >>> ExcelReaderService._column_letter_to_index("AB")
+            27
+            >>> ExcelReaderService._column_letter_to_index("ZZ")
+            701
+
+        Algorithm:
+            Excel column letters work like base-26 number system:
+            - A = 1, B = 2, ..., Z = 26 (Excel 1-based)
+            - AA = 27, AB = 28, ..., AZ = 52
+            - BA = 53, ..., ZZ = 702
+            We convert to 0-based: A=0, B=1, ..., ZZ=701
+        """
+        # Validate input
+        if not column or not column.isalpha():
+            raise ValueError(f"Column must contain only letters, got: '{column}'")
+
+        # Convert Excel column letter to 1-based index (A=1, B=2, AA=27, etc.)
+        index = 0
+        for char in column.upper():
+            index = index * 26 + (ord(char) - ord('A') + 1)
+
+        # Convert to 0-based index (A=0, B=1, AA=26, etc.)
+        return index - 1
+
+    def read_descriptions(
         self,
         file_path: Path,
         description_column: str,  # e.g., "B" or "C" (Excel letter notation)
@@ -204,10 +254,31 @@ class ExcelReaderService:
             - No streaming (loads entire file to memory)
             - Cache has no TTL/LRU (simple dict, cleared manually or on instance destruction)
         """
-        raise NotImplementedError(
-            "read_descriptions() to be implemented in Phase 3. "
-            "Will use Polars to read Excel, extract column, create HVACDescription entities."
+        # Step 1: Validate file size (max 10MB)
+        self._validate_file_size(file_path)
+
+        # Step 2: Load Excel file into DataFrame (with caching)
+        dataframe = self._load_excel_dataframe(file_path, sheet_name)
+
+        # Step 3: Validate that description_column exists in DataFrame
+        self._validate_column_exists(dataframe, description_column)
+
+        # Step 4: Extract text from column and row range (skip empty rows)
+        text_with_rows = self._extract_column_range(
+            dataframe=dataframe,
+            column=description_column,
+            start_row=start_row,
+            end_row=end_row,
         )
+
+        # Step 5: Create HVACDescription entities from extracted text
+        descriptions = self._create_hvac_descriptions(
+            text_with_rows=text_with_rows,
+            file_id=file_id,
+        )
+
+        # Step 6: Return list of HVACDescription entities
+        return descriptions
 
     def _validate_file_size(self, file_path: Path) -> None:
         """
@@ -233,9 +304,20 @@ class ExcelReaderService:
             - Compare with MAX_FILE_SIZE_BYTES
             - Raise FileSizeExceededError if exceeded with human-readable message
         """
-        raise NotImplementedError(
-            "_validate_file_size() to be implemented in Phase 3."
-        )
+        # Check if file exists
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        # Get file size in bytes
+        file_size_bytes = file_path.stat().st_size
+
+        # Check if file size exceeds maximum allowed limit
+        if file_size_bytes > self.MAX_FILE_SIZE_BYTES:
+            raise FileSizeExceededError(
+                message="Excel file exceeds maximum allowed size",
+                file_size_bytes=file_size_bytes,
+                max_size_bytes=self.MAX_FILE_SIZE_BYTES,
+            )
 
     def _load_excel_dataframe(
         self, file_path: Path, sheet_name: Optional[str] = None
@@ -286,9 +368,47 @@ class ExcelReaderService:
             - Store in cache before returning
             - Encoding errors handled by Polars internally (UTF-8 → CP1250)
         """
-        raise NotImplementedError(
-            "_load_excel_dataframe() to be implemented in Phase 3."
-        )
+        # Create cache key: (file_path as string, sheet_name or empty string)
+        cache_key = (str(file_path), sheet_name or "")
+
+        # Check if DataFrame is already in cache
+        if cache_key in self._dataframe_cache:
+            return self._dataframe_cache[cache_key]
+
+        # Try loading Excel file with Polars
+        df: Optional[pl.DataFrame] = None
+        last_error: Optional[Exception] = None
+
+        try:
+            # First attempt: Default engine (Polars auto-selects best available)
+            df = pl.read_excel(
+                source=file_path,
+                sheet_name=sheet_name,
+            )
+        except Exception as e:
+            last_error = e
+            # Fallback: Try explicit openpyxl engine
+            try:
+                df = pl.read_excel(
+                    source=file_path,
+                    sheet_name=sheet_name,
+                    engine="openpyxl",
+                )
+            except Exception as fallback_error:
+                last_error = fallback_error
+
+        # If both attempts failed, raise ExcelParsingError
+        if df is None:
+            raise ExcelParsingError(
+                message="Cannot parse Excel file (tried default and openpyxl engines)",
+                file_path=str(file_path),
+                original_error=last_error,
+            )
+
+        # Store DataFrame in cache for future reads
+        self._dataframe_cache[cache_key] = df
+
+        return df
 
     def _validate_column_exists(
         self, dataframe: pl.DataFrame, column: str
@@ -320,9 +440,23 @@ class ExcelReaderService:
                 "Column '{column}' (index {index}) not found.
                  File has {num_cols} columns: {col_names}"
         """
-        raise NotImplementedError(
-            "_validate_column_exists() to be implemented in Phase 3."
-        )
+        # Convert Excel column letter to 0-based DataFrame index
+        column_index = self._column_letter_to_index(column)
+
+        # Get total number of columns in DataFrame
+        num_columns = len(dataframe.columns)
+
+        # Check if column index is within DataFrame bounds
+        if column_index >= num_columns:
+            # Column doesn't exist - raise error with helpful details
+            raise ColumnNotFoundError(
+                message=(
+                    f"Column '{column}' (index {column_index}) not found. "
+                    f"File has {num_columns} columns: {', '.join(dataframe.columns)}"
+                ),
+                column=column,
+                available_columns=list(dataframe.columns),
+            )
 
     def _extract_column_range(
         self,
@@ -385,9 +519,55 @@ class ExcelReaderService:
             - Formula: df_index = excel_row - 1
             - Reverse: excel_row = df_index + start_row
         """
-        raise NotImplementedError(
-            "_extract_column_range() to be implemented in Phase 3."
-        )
+        # Validate row range
+        if end_row is not None and start_row > end_row:
+            raise ValueError(
+                f"start_row ({start_row}) must be <= end_row ({end_row})"
+            )
+
+        # Convert Excel column letter to 0-based DataFrame column index
+        column_index = self._column_letter_to_index(column)
+
+        # Get column name from DataFrame (e.g., "column_0", "column_1", or original header)
+        column_name = dataframe.columns[column_index]
+
+        # Convert Excel row numbers (1-based) to DataFrame indices (0-based)
+        start_index = start_row - 1  # Excel row 1 = DataFrame index 0
+
+        # Calculate end index for slicing
+        if end_row is not None:
+            end_index = end_row  # Slice is exclusive, so end_row doesn't need -1
+        else:
+            end_index = len(dataframe)  # Read until end of DataFrame
+
+        # Slice DataFrame to get only requested rows
+        sliced_df = dataframe[start_index:end_index]
+
+        # Get column data as list
+        column_data = sliced_df[column_name].to_list()
+
+        # Extract non-empty text values with their Excel row numbers
+        results: list[tuple[str, int]] = []
+
+        for df_idx, value in enumerate(column_data):
+            # Calculate Excel row number (1-based)
+            excel_row = start_row + df_idx
+
+            # Skip None values
+            if value is None:
+                continue
+
+            # Convert to string and trim whitespace
+            text = str(value).strip()
+
+            # Skip empty strings (after trim)
+            if not text:
+                continue
+
+            # Add (text, excel_row_number) tuple to results
+            results.append((text, excel_row))
+
+        return results
 
     def _create_hvac_descriptions(
         self,
@@ -437,9 +617,19 @@ class ExcelReaderService:
             - Return list
             - Handle validation errors from HVACDescription (text too short, etc.)
         """
-        raise NotImplementedError(
-            "_create_hvac_descriptions() to be implemented in Phase 3."
-        )
+        descriptions: list[HVACDescription] = []
+
+        for text, row_number in text_with_rows:
+            # Create HVACDescription entity using factory method
+            # This ensures proper metadata tracking (row number, file ID)
+            description = HVACDescription.from_excel_row(
+                raw_text=text,
+                source_row_number=row_number,
+                file_id=file_id,
+            )
+            descriptions.append(description)
+
+        return descriptions
 
     def _clear_cache(self) -> None:
         """

@@ -19,7 +19,7 @@ Architecture Notes:
     - Phase 2: Full contract with formatting preservation, coloring, backup
 """
 
-from decimal import Decimal
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -28,7 +28,6 @@ from openpyxl.styles import PatternFill
 from openpyxl.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
-from src.application.commands.process_matching import ProcessMatchingCommand
 from src.application.models import ReportFormat
 from src.domain.hvac.entities.hvac_description import HVACDescription
 
@@ -86,7 +85,52 @@ class ExcelWriterService:
         """
         pass
 
-    async def write_results_to_file(
+    @staticmethod
+    def _column_letter_to_index(column: str) -> int:
+        """
+        Convert Excel column letter to 1-based index for openpyxl.
+
+        Converts Excel column notation (A, B, AA, ZZ) to 1-based integer index
+        for openpyxl column access (openpyxl uses 1-based indexing).
+
+        Args:
+            column: Excel column letter (e.g., "A", "B", "AA", "ZZ")
+
+        Returns:
+            1-based column index (A=1, B=2, Z=26, AA=27, etc.)
+
+        Raises:
+            ValueError: If column contains non-alphabetic characters
+
+        Examples:
+            >>> ExcelWriterService._column_letter_to_index("A")
+            1
+            >>> ExcelWriterService._column_letter_to_index("B")
+            2
+            >>> ExcelWriterService._column_letter_to_index("Z")
+            26
+            >>> ExcelWriterService._column_letter_to_index("AA")
+            27
+
+        Algorithm:
+            Excel column letters work like base-26 number system:
+            - A = 1, B = 2, ..., Z = 26
+            - AA = 27, AB = 28, ..., AZ = 52
+            - BA = 53, ..., ZZ = 702
+            openpyxl uses 1-based indexing (different from Polars which is 0-based)
+        """
+        # Validate input
+        if not column or not column.isalpha():
+            raise ValueError(f"Column must contain only letters, got: '{column}'")
+
+        # Convert Excel column letter to 1-based index (A=1, B=2, AA=27, etc.)
+        index = 0
+        for char in column.upper():
+            index = index * 26 + (ord(char) - ord('A') + 1)
+
+        return index
+
+    def write_results_to_file(
         self,
         original_file_path: Path,
         descriptions: list[HVACDescription],
@@ -195,10 +239,41 @@ class ExcelWriterService:
             - Backup: Created in same directory with _backup suffix
             - Empty cells: If matched_price is None, cell stays empty (no text)
         """
-        raise NotImplementedError(
-            "write_results_to_file() to be implemented in Phase 3. "
-            "Will use openpyxl to preserve formatting and write prices/reports to Excel."
-        )
+        # Step 1: Create backup of original file
+        self._create_backup(original_file_path)
+
+        # Step 2: Load workbook with openpyxl (preserves formatting)
+        workbook = self._load_workbook(original_file_path)
+
+        # Step 3: Get worksheet (first sheet or specified sheet)
+        worksheet = self._get_worksheet(workbook, sheet_name)
+
+        # Step 4: Write prices to price_column
+        self._write_prices_to_column(worksheet, descriptions, price_column)
+
+        # Step 5: Apply conditional coloring to price cells
+        self._apply_cell_coloring(worksheet, descriptions, price_column)
+
+        # Step 6: Write match reports to report_column (if specified)
+        if report_column:
+            self._write_reports_to_column(
+                worksheet, descriptions, report_column, report_format
+            )
+
+        # Step 7: Auto-size columns for readability
+        columns_to_resize = [price_column]
+        if report_column:
+            columns_to_resize.append(report_column)
+        self._autosize_columns(worksheet, columns_to_resize)
+
+        # Step 8: Determine output path (default: parent / "result.xlsx")
+        if output_path is None:
+            output_path = original_file_path.parent / "result.xlsx"
+
+        # Step 9: Save workbook to output_path
+        result_path = self._save_workbook(workbook, output_path)
+
+        return result_path
 
     async def write_results(
         self,
@@ -300,9 +375,17 @@ class ExcelWriterService:
             - Copy file: shutil.copy2(original_path, backup_path)
             - Return backup_path
         """
-        raise NotImplementedError(
-            "_create_backup() to be implemented in Phase 3."
-        )
+        # Check if original file exists
+        if not original_path.exists():
+            raise FileNotFoundError(f"File not found: {original_path}")
+
+        # Create backup path: parent directory / filename_backup.extension
+        backup_path = original_path.parent / f"{original_path.stem}_backup{original_path.suffix}"
+
+        # Copy file with metadata preservation (shutil.copy2 preserves timestamps)
+        shutil.copy2(original_path, backup_path)
+
+        return backup_path
 
     def _load_workbook(self, file_path: Path) -> Workbook:
         """
@@ -329,9 +412,15 @@ class ExcelWriterService:
             - data_only=False preserves formulas (not just values)
             - Return workbook object
         """
-        raise NotImplementedError(
-            "_load_workbook() to be implemented in Phase 3."
-        )
+        # Check if file exists
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        # Load workbook with openpyxl
+        # data_only=False preserves formulas (not just calculated values)
+        workbook = load_workbook(filename=file_path, data_only=False)
+
+        return workbook
 
     def _get_worksheet(
         self, workbook: Workbook, sheet_name: Optional[str] = None
@@ -360,9 +449,19 @@ class ExcelWriterService:
             - Else: return wb[sheet_name]
             - Handle KeyError if sheet doesn't exist
         """
-        raise NotImplementedError(
-            "_get_worksheet() to be implemented in Phase 3."
-        )
+        # If sheet_name not specified, use active sheet (first sheet)
+        if sheet_name is None:
+            return workbook.active
+
+        # Get worksheet by name
+        try:
+            return workbook[sheet_name]
+        except KeyError:
+            available_sheets = ", ".join(workbook.sheetnames)
+            raise ValueError(
+                f"Sheet '{sheet_name}' not found. "
+                f"Available sheets: {available_sheets}"
+            )
 
     def _write_prices_to_column(
         self,
@@ -396,9 +495,23 @@ class ExcelWriterService:
                     cell.value = float(desc.matched_price)
                     # Note: openpyxl uses 1-based for both row and column
         """
-        raise NotImplementedError(
-            "_write_prices_to_column() to be implemented in Phase 3."
-        )
+        # Convert column letter to 1-based index for openpyxl
+        column_index = self._column_letter_to_index(column)
+
+        # Write prices to column for each description
+        for desc in descriptions:
+            # Skip descriptions without matched price
+            if desc.matched_price is None:
+                continue
+
+            # Get Excel row number (1-based, from source_row_number)
+            row_number = desc.source_row_number
+
+            # Get cell at (row, column) - both 1-based in openpyxl
+            cell = worksheet.cell(row=row_number, column=column_index)
+
+            # Write price as float (Decimal -> float for Excel)
+            cell.value = float(desc.matched_price)
 
     def _write_reports_to_column(
         self,
@@ -437,9 +550,30 @@ class ExcelWriterService:
                     cell.value = report
             - Note: report_format might be used in future for different report styles
         """
-        raise NotImplementedError(
-            "_write_reports_to_column() to be implemented in Phase 3."
-        )
+        # Convert column letter to 1-based index for openpyxl
+        column_index = self._column_letter_to_index(column)
+
+        # Write reports to column for each description
+        for desc in descriptions:
+            # Skip descriptions without match score (no match found)
+            if desc.match_score is None:
+                continue
+
+            # Get match report from description
+            report = desc.get_match_report()
+
+            # Skip if report is None or empty
+            if not report:
+                continue
+
+            # Get Excel row number (1-based)
+            row_number = desc.source_row_number
+
+            # Get cell at (row, column) - both 1-based in openpyxl
+            cell = worksheet.cell(row=row_number, column=column_index)
+
+            # Write report text
+            cell.value = report
 
     def _apply_cell_coloring(
         self,
@@ -479,9 +613,36 @@ class ExcelWriterService:
                         fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
                         cell.fill = fill
         """
-        raise NotImplementedError(
-            "_apply_cell_coloring() to be implemented in Phase 3."
-        )
+        # Convert column letter to 1-based index for openpyxl
+        column_index = self._column_letter_to_index(column)
+
+        # Apply coloring to cells for each description
+        for desc in descriptions:
+            # Skip descriptions without matched price or match score
+            if desc.matched_price is None or desc.match_score is None:
+                continue
+
+            # Get match score (0-100)
+            score = desc.match_score.final_score
+
+            # Get color based on score
+            color = self._get_color_for_score(score)
+
+            # Skip if no color (shouldn't happen, but defensive check)
+            if not color:
+                continue
+
+            # Get Excel row number (1-based)
+            row_number = desc.source_row_number
+
+            # Get cell at (row, column) - both 1-based in openpyxl
+            cell = worksheet.cell(row=row_number, column=column_index)
+
+            # Create fill pattern with color
+            fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+
+            # Apply fill to cell
+            cell.fill = fill
 
     def _get_color_for_score(self, score: float) -> Optional[str]:
         """
@@ -543,9 +704,27 @@ class ExcelWriterService:
                             max_width = max(max_width, len(str(cell.value)))
                 * Set column width: ws.column_dimensions[column_letter].width = max_width + 2
         """
-        raise NotImplementedError(
-            "_autosize_columns() to be implemented in Phase 3."
-        )
+        # Auto-size each column in the list
+        for column_letter in columns:
+            # Calculate maximum content width for this column
+            max_width = 0
+
+            # Iterate through all cells in this column
+            for cell in worksheet[column_letter]:
+                # Skip empty cells
+                if cell.value is None:
+                    continue
+
+                # Calculate length of cell value as string
+                cell_length = len(str(cell.value))
+
+                # Update max width
+                max_width = max(max_width, cell_length)
+
+            # Set column width (add padding of 2 for readability)
+            # Minimum width of 8 to ensure columns are visible
+            adjusted_width = max(max_width + 2, 8)
+            worksheet.column_dimensions[column_letter].width = adjusted_width
 
     def _save_workbook(self, workbook: Workbook, output_path: Path) -> Path:
         """
@@ -573,9 +752,13 @@ class ExcelWriterService:
             - Save workbook: workbook.save(output_path)
             - Return output_path
         """
-        raise NotImplementedError(
-            "_save_workbook() to be implemented in Phase 3."
-        )
+        # Create parent directory if it doesn't exist
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Save workbook to file
+        workbook.save(output_path)
+
+        return output_path
 
     async def write_unmatched_report(
         self, descriptions: list[HVACDescription], output_path: Path

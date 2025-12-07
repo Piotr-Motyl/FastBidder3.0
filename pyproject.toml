@@ -2,7 +2,7 @@
 name = "fastbidder"
 version = "3.0.0"
 description = "Automated HVAC quotation matching system using hybrid AI approach"
-authors = ["Your Name <email@example.com>"]
+authors = ["Piotr Motyl <motyl.piotr.it@gmail.com>"]
 license = "MIT"
 readme = "README.md"
 package-mode = false
