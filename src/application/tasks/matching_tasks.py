@@ -441,7 +441,305 @@ def process_matching_task(
     #     except Exception as cleanup_exc:
     #         logger.error(f"Job {job_id}: Cleanup failed: {cleanup_exc}")
 
-    raise NotImplementedError(
-        "Implementation in Phase 3 - Task 3.2.1. "
-        "This is a detailed contract (Phase 2 - Task 2.2.2)."
+    # Implementation based on Phase 2 contract
+    import os
+    import psutil
+    from datetime import datetime
+    from uuid import UUID
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    from src.application.commands.process_matching import ProcessMatchingCommand
+    from src.application.models import MatchingStrategy, ReportFormat
+    from src.domain.hvac.entities.hvac_description import HVACDescription
+    from src.domain.hvac.services.concrete_parameter_extractor import (
+        ConcreteParameterExtractor,
     )
+    from src.domain.hvac.services.simple_matching_engine import SimpleMatchingEngine
+    from src.domain.hvac.value_objects.matching_config import MatchingConfig
+    from src.infrastructure.file_storage.excel_reader_service import ExcelReaderService
+    from src.infrastructure.file_storage.excel_writer_service import ExcelWriterService
+    from src.infrastructure.file_storage.file_storage_service import FileStorageService
+    from src.infrastructure.persistence.redis.progress_tracker import (
+        RedisProgressTracker,
+    )
+
+    # Initialize tracking variables
+    start_time = time.time()
+    job_id = self.request.id
+    process = psutil.Process(os.getpid())
+    partial_results = False
+    rows_processed = 0
+    rows_matched = 0
+
+    # Helper function for logging with memory
+    def log_with_memory(stage: str, message: str):
+        memory_mb = process.memory_info().rss / 1024 / 1024
+        timestamp = datetime.now().isoformat()
+        logger.info(f"{timestamp} | {memory_mb:.1f}MB | {stage} | {message}")
+
+    # Helper function for progress updates
+    def update_progress(
+        percentage: int, message: str, stage: str, current: int = 0, total: int = 0
+    ):
+        self.update_state(
+            state="PROCESSING",
+            meta={
+                "progress": percentage,
+                "message": message,
+                "current_item": current,
+                "total_items": total,
+                "stage": stage,
+            },
+        )
+        log_with_memory(
+            stage, f"{message} ({current}/{total})" if total > 0 else message
+        )
+
+    try:
+        # ===== STAGE 1: START (0%) =====
+        update_progress(0, "Task started", "START")
+
+        # Initialize services
+        excel_reader = ExcelReaderService()
+        excel_writer = ExcelWriterService()
+        file_storage = FileStorageService()
+        parameter_extractor = ConcreteParameterExtractor()
+
+        # Create matching config and engine
+        config = MatchingConfig.default()
+        matching_engine = SimpleMatchingEngine(parameter_extractor, config)
+
+        # Initialize progress tracker
+        progress_tracker = RedisProgressTracker()
+
+        # Convert strategy and format strings to Enums
+        strategy = MatchingStrategy(matching_strategy)
+        format_type = ReportFormat(report_format)
+
+        # ===== STAGE 2: FILES_LOADED (10%) =====
+        update_progress(10, "Loading files from storage", "FILES_LOADED")
+
+        # Get file paths from storage
+        wf_file_id = UUID(working_file["file_id"])
+        ref_file_id = UUID(reference_file["file_id"])
+        wf_path = file_storage.get_file_path(wf_file_id, "working")
+        ref_path = file_storage.get_file_path(ref_file_id, "reference")
+
+        # Load Excel DataFrames
+        wf_df = excel_reader.read_excel_to_dataframe(wf_path)
+        ref_df = excel_reader.read_excel_to_dataframe(ref_path)
+
+        # ===== STAGE 3: DESCRIPTIONS_EXTRACTED (30%) =====
+        update_progress(30, "Extracting descriptions from Excel", "DESCRIPTIONS_EXTRACTED")
+
+        # Extract descriptions from working file
+        wf_col_idx = ProcessMatchingCommand.column_to_index(
+            working_file["description_column"]
+        )
+        wf_range_start = working_file["description_range"]["start"] - 1  # 0-based
+        wf_range_end = working_file["description_range"]["end"]
+        wf_raw_texts = wf_df.iloc[wf_range_start:wf_range_end, wf_col_idx].tolist()
+
+        # Extract descriptions from reference file
+        ref_col_idx = ProcessMatchingCommand.column_to_index(
+            reference_file["description_column"]
+        )
+        ref_range_start = reference_file["description_range"]["start"] - 1
+        ref_range_end = reference_file["description_range"]["end"]
+        ref_raw_texts = ref_df.iloc[ref_range_start:ref_range_end, ref_col_idx].tolist()
+
+        # Extract prices from reference file
+        ref_price_col_idx = ProcessMatchingCommand.column_to_index(
+            reference_file["price_source_column"]
+        )
+        ref_prices = ref_df.iloc[
+            ref_range_start:ref_range_end, ref_price_col_idx
+        ].tolist()
+
+        total_wf_rows = len(wf_raw_texts)
+        log_with_memory(
+            "DESCRIPTIONS_EXTRACTED",
+            f"Extracted {total_wf_rows} WF descriptions, {len(ref_raw_texts)} REF descriptions",
+        )
+
+        # ===== STAGE 4: PARAMETERS_EXTRACTED (50%) =====
+        update_progress(
+            50, "Extracting HVAC parameters (DN, PN, etc.)", "PARAMETERS_EXTRACTED"
+        )
+
+        # Create HVACDescription entities and extract parameters
+        wf_descriptions = []
+        for idx, text in enumerate(wf_raw_texts):
+            desc = HVACDescription(raw_text=str(text) if text else "")
+            desc.extract_parameters(parameter_extractor)
+            wf_descriptions.append(desc)
+
+        ref_descriptions = []
+        for idx, (text, price) in enumerate(zip(ref_raw_texts, ref_prices)):
+            desc = HVACDescription(raw_text=str(text) if text else "")
+            desc.extract_parameters(parameter_extractor)
+            if price and price != "":
+                desc.set_price(float(price))
+            ref_descriptions.append(desc)
+
+        # ===== STAGE 5: MATCHING (50-90%) =====
+        update_interval = min(100, max(1, total_wf_rows // 10))
+        log_with_memory(
+            "MATCHING",
+            f"Starting matching with interval={update_interval} (threshold={matching_threshold})",
+        )
+
+        matches_count = 0
+        rows_processed = 0
+
+        for wf_idx, wf_desc in enumerate(wf_descriptions):
+            # Find match using matching engine
+            match_result = matching_engine.match_single(
+                wf_desc, ref_descriptions, matching_threshold
+            )
+
+            rows_processed += 1
+
+            if match_result:
+                # Apply match result to working description
+                wf_desc.apply_match_result(match_result)
+
+                # Write price to target column (Excel 1-based row)
+                target_row = wf_range_start + wf_idx
+                target_col_idx = ProcessMatchingCommand.column_to_index(
+                    working_file["price_target_column"]
+                )
+                wf_df.iloc[target_row, target_col_idx] = match_result.matched_price
+
+                # Write match report if column specified
+                if working_file.get("matching_report_column"):
+                    report_text = f"Match: {match_result.matched_description.raw_text[:50]}... | Score: {match_result.match_score.total_score:.1f}%"
+                    report_col_idx = ProcessMatchingCommand.column_to_index(
+                        working_file["matching_report_column"]
+                    )
+                    wf_df.iloc[target_row, report_col_idx] = report_text
+
+                matches_count += 1
+                rows_matched += 1
+
+            # Update progress at calculated interval
+            if (wf_idx + 1) % update_interval == 0 or wf_idx == total_wf_rows - 1:
+                progress_pct = 50 + int((wf_idx + 1) / total_wf_rows * 40)
+                update_progress(
+                    progress_pct,
+                    f"Matching descriptions ({matches_count} matched)",
+                    "MATCHING",
+                    current=wf_idx + 1,
+                    total=total_wf_rows,
+                )
+
+        # ===== STAGE 6: SAVING_RESULTS (90%) =====
+        update_progress(90, "Saving results to Excel file", "SAVING_RESULTS")
+
+        # Save modified working file as result
+        result_path = file_storage.get_result_file_path(UUID(job_id))
+        excel_writer.save_dataframe_to_excel(wf_df, result_path)
+
+        # ===== STAGE 7: COMPLETE (100%) =====
+        processing_time = time.time() - start_time
+        update_progress(
+            100,
+            "Matching completed successfully",
+            "COMPLETE",
+            total_wf_rows,
+            total_wf_rows,
+        )
+
+        # Update Redis progress tracker
+        progress_tracker.complete_job(
+            job_id,
+            {
+                "matches_count": matches_count,
+                "rows_processed": rows_processed,
+                "rows_matched": rows_matched,
+            },
+        )
+
+        # Return success result with metrics
+        return {
+            "status": "completed",
+            "job_id": job_id,
+            "matches_count": matches_count,
+            "processing_time": processing_time,
+            "result_file_id": job_id,  # Result file uses job_id
+            "matching_strategy_used": matching_strategy,
+            "report_format_used": report_format,
+            "partial_results": False,
+            "rows_processed": rows_processed,
+            "rows_matched": rows_matched,
+        }
+
+    except SoftTimeLimitExceeded:
+        # Soft time limit reached - save partial results
+        logger.warning(f"Job {job_id}: Soft time limit exceeded, saving partial results")
+        partial_results = True
+
+        try:
+            result_path = file_storage.get_result_file_path(UUID(job_id))
+            excel_writer.save_dataframe_to_excel(wf_df, result_path)
+            processing_time = time.time() - start_time
+
+            return {
+                "status": "completed",
+                "job_id": job_id,
+                "matches_count": matches_count,
+                "processing_time": processing_time,
+                "result_file_id": job_id,
+                "matching_strategy_used": matching_strategy,
+                "report_format_used": report_format,
+                "partial_results": True,
+                "rows_processed": rows_processed,
+                "rows_matched": rows_matched,
+                "error": "Soft time limit exceeded - partial results saved",
+            }
+        except Exception as save_exc:
+            logger.error(f"Job {job_id}: Failed to save partial results: {save_exc}")
+            raise
+
+    except Exception as exc:
+        # Log error with memory usage
+        log_with_memory("ERROR", f"Task failed: {str(exc)}")
+
+        # Try to save partial results
+        try:
+            if rows_processed > 0 and "wf_df" in locals():
+                logger.info(
+                    f"Job {job_id}: Attempting to save partial results ({rows_processed} rows processed)"
+                )
+                result_path = file_storage.get_result_file_path(UUID(job_id))
+                excel_writer.save_dataframe_to_excel(wf_df, result_path)
+                partial_results = True
+                logger.info(f"Job {job_id}: Partial results saved")
+        except Exception as save_exc:
+            logger.error(f"Job {job_id}: Failed to save partial results: {save_exc}")
+            partial_results = False
+
+        # Update progress tracker with failure
+        try:
+            progress_tracker.fail_job(job_id, str(exc))
+        except Exception:
+            pass
+
+        # Retry with exponential backoff
+        raise self.retry(exc=exc)
+
+    finally:
+        # Cleanup: clear large variables from memory
+        try:
+            if "wf_df" in locals():
+                del wf_df
+            if "ref_df" in locals():
+                del ref_df
+            if "wf_descriptions" in locals():
+                del wf_descriptions
+            if "ref_descriptions" in locals():
+                del ref_descriptions
+
+            log_with_memory("CLEANUP", "Memory cleanup completed")
+        except Exception as cleanup_exc:
+            logger.error(f"Job {job_id}: Cleanup failed: {cleanup_exc}")

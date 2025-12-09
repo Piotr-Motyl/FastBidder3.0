@@ -27,6 +27,7 @@ Phase 1 Note:
     All endpoints raise NotImplementedError.
 """
 
+import logging
 from typing import Optional, Dict, Any
 from uuid import UUID
 
@@ -35,9 +36,14 @@ from pydantic import BaseModel, Field
 
 from src.application.models import JobStatus, MatchingStrategy, ReportFormat
 from src.application.commands.process_matching import ProcessMatchingCommand
+from src.application.services.process_matching_use_case import ProcessMatchingUseCase
+from src.infrastructure.file_storage.file_storage_service import FileStorageService
 
 # Import shared API schemas
 from src.api.schemas.common import ErrorResponse
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -217,10 +223,12 @@ async def get_process_matching_use_case():
 
     The use case will validate business rules and trigger Celery task.
     """
-    # Implementation in Phase 3
-    raise NotImplementedError(
-        "ProcessMatchingUseCase not implemented yet - will be added in Task 1.1.2/3.4.1"
-    )
+    # Create FileStorageService instance
+    file_storage = FileStorageService()
+
+    # Create and return ProcessMatchingUseCase with injected dependencies
+    # Note: celery_app is not needed as dependency - use case imports it directly
+    return ProcessMatchingUseCase(file_storage=file_storage, celery_app=None)
 
 
 # ============================================================================
@@ -434,7 +442,73 @@ async def process_matching(
         This method defines the interface contract with detailed documentation.
         Actual implementation will be added in Phase 3 - Task 3.4.1.
     """
-    raise NotImplementedError(
-        "Implementation in Phase 3 - Task 3.4.1. "
-        "This is a detailed contract (Phase 2 - Task 2.4.2)."
-    )
+    # Implementation based on Phase 2 contract
+    try:
+        # Step 2: Convert request to Command
+        command = ProcessMatchingCommand(
+            working_file=request.working_file,
+            reference_file=request.reference_file,
+            matching_threshold=request.matching_threshold,
+            matching_strategy=request.matching_strategy,
+            report_format=request.report_format,
+        )
+        logger.debug(
+            f"Created command for WF={request.working_file.file_id}, "
+            f"REF={request.reference_file.file_id}"
+        )
+
+        # Step 3: Execute use case (validates, estimates, triggers Celery)
+        result = await use_case.execute(command)
+        logger.info(
+            f"Job queued: {result.job_id}, estimated_time={result.estimated_time}s"
+        )
+
+        # Step 9: Convert result to response
+        return ProcessMatchingResponse(
+            job_id=str(result.job_id),  # Convert UUID to string for JSON
+            status=result.status,
+            estimated_time=result.estimated_time,
+            message=result.message,
+        )
+
+    except ValueError as e:
+        # File IDs identical or invalid UUID format
+        logger.warning(f"Bad request: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "INVALID_PARAMETERS",
+                "message": str(e),
+                "details": {
+                    "working_file_id": request.working_file.file_id,
+                    "reference_file_id": request.reference_file.file_id,
+                },
+            },
+        )
+
+    except FileNotFoundError as e:
+        # File not found in uploads storage
+        logger.warning(f"File not found: {e}")
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "FILE_NOT_FOUND",
+                "message": str(e),
+                "details": {
+                    "working_file_id": request.working_file.file_id,
+                    "reference_file_id": request.reference_file.file_id,
+                },
+            },
+        )
+
+    except Exception as e:
+        # Unexpected error (Celery connection, etc.)
+        logger.error(f"Unexpected error during job creation: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "INTERNAL_SERVER_ERROR",
+                "message": "An unexpected error occurred during job creation",
+                "details": {"error": str(e)},
+            },
+        )

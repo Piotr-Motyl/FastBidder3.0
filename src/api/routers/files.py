@@ -27,16 +27,27 @@ Phase 2 Note:
     All endpoints raise NotImplementedError.
 """
 
+import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, status, HTTPException, Depends, UploadFile, File
 from pydantic import BaseModel, Field
 
-# Import will be used in Phase 3 implementation
-# from src.application.use_cases.file_upload import FileUploadUseCase
+# Import Application Layer use case
+from src.application.services.file_upload_use_case import FileUploadUseCase
+from src.domain.shared.exceptions import (
+    FileSizeExceededError,
+    ExcelParsingError,
+)
+
+# Import Infrastructure services for dependency injection
+from src.infrastructure.file_storage.file_storage_service import FileStorageService
 
 # Import shared API schemas
 from src.api.schemas.common import ErrorResponse
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -183,10 +194,11 @@ async def get_file_upload_use_case():
     - Extract preview (first 5 rows)
     - Return FileUploadResult
     """
-    # Implementation in Phase 3
-    raise NotImplementedError(
-        "FileUploadUseCase not implemented yet - will be added in Task 2.4.1/Phase 3"
-    )
+    # Create FileStorageService instance
+    file_storage = FileStorageService()
+
+    # Create and return FileUploadUseCase with injected dependencies
+    return FileUploadUseCase(file_storage=file_storage)
 
 
 # ============================================================================
@@ -376,7 +388,68 @@ async def upload_file(
     #         ).dict()
     #     )
 
-    raise NotImplementedError(
-        "Implementation in Phase 3 - Task 3.4.1. "
-        "This is a contract only (Phase 2 - Task 2.4.1)."
-    )
+    # Implementation based on Phase 2 contract
+    try:
+        # Read file data
+        file_data = await file.read()
+
+        # Execute use case
+        result = await use_case.execute(file_data=file_data, filename=file.filename)
+
+        # Convert to response
+        return UploadFileResponse(
+            file_id=result.file_id,
+            filename=result.filename,
+            size_mb=result.size_mb,
+            sheets_count=result.sheets_count,
+            rows_count=result.rows_count,
+            columns_count=result.columns_count,
+            upload_time=result.upload_time,
+            preview=result.preview,
+            message="File uploaded successfully. Use file_id in matching requests.",
+        )
+
+    except ValueError as e:
+        # Invalid file extension
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "INVALID_FILE_EXTENSION",
+                "message": str(e),
+                "details": {"filename": file.filename},
+            },
+        )
+
+    except FileSizeExceededError as e:
+        # File too large
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "code": "FILE_TOO_LARGE",
+                "message": str(e),
+                "details": {"filename": file.filename, "max_size_mb": 10},
+            },
+        )
+
+    except ExcelParsingError as e:
+        # Cannot parse Excel file
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "EXCEL_PARSING_ERROR",
+                "message": str(e),
+                "details": {"filename": file.filename},
+            },
+        )
+
+    except Exception as e:
+        # Unexpected error
+        logger.error(f"Unexpected error during file upload: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "INTERNAL_SERVER_ERROR",
+                "message": "An unexpected error occurred during file upload",
+                "details": {"error": str(e)},
+            },
+        )

@@ -15,9 +15,16 @@ Architecture Notes:
     - Follows CQRS pattern for read operations
 """
 
+import logging
 from typing import Optional
 from uuid import UUID
+
 from pydantic import BaseModel, Field
+
+from src.application.models import JobStatus
+
+# Configure logger for this module
+logger = logging.getLogger(__name__)
 
 
 class GetJobStatusQuery(BaseModel):
@@ -250,10 +257,54 @@ class GetJobStatusQueryHandler:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3 - Task 3.4.1.
         """
-        raise NotImplementedError(
-            "Implementation in Phase 3 - Task 3.4.1. "
-            "This is a detailed contract (Phase 2 - Task 2.4.3)."
+        # Step 1: Extract job_id
+        job_id_str = str(query.job_id)
+        logger.debug(f"Retrieving status for job: {job_id_str}")
+
+        # Step 2: Fetch from Redis via progress_tracker
+        progress_data = self.progress_tracker.get_status(job_id_str)
+
+        # Step 3: Check if exists
+        if not progress_data:
+            logger.warning(f"Job not found in Redis: {job_id_str}")
+            raise JobNotFoundException(query.job_id)
+
+        logger.debug(
+            f"Retrieved progress data: status={progress_data['status']}, "
+            f"progress={progress_data['progress']}%"
         )
+
+        # Step 4: Convert status string to enum
+        try:
+            status_enum = JobStatus(progress_data["status"])
+        except ValueError as e:
+            logger.error(f"Invalid status value from Redis: {progress_data['status']}")
+            raise ValueError(f"Invalid status in Redis: {progress_data['status']}")
+
+        # Step 5-7: Map fields
+        result_ready = progress_data["status"] == "completed"
+        error_details = None
+        if progress_data.get("errors"):
+            error_details = "\n".join(progress_data["errors"])
+
+        # Step 8: Create and return result
+        result = JobStatusResult(
+            job_id=query.job_id,
+            status=status_enum.value,  # Convert enum to string for Pydantic
+            progress=progress_data["progress"],
+            message=progress_data["message"],
+            result_ready=result_ready,
+            current_step=progress_data.get("stage"),  # May be None in early Phase
+            error_details=error_details,
+            created_at=None,  # Phase 2: Not tracked yet
+            updated_at=progress_data.get("last_heartbeat"),
+        )
+
+        logger.info(
+            f"Job {job_id_str} status retrieved: {status_enum.value} "
+            f"({progress_data['progress']}%)"
+        )
+        return result
 
 
 class JobNotFoundException(Exception):

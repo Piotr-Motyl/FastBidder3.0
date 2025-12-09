@@ -26,8 +26,10 @@ Phase 1 Note:
     This is a CONTRACT ONLY. Implementation in Phase 3.
 """
 
+import logging
 from typing import TYPE_CHECKING, Optional
 from uuid import UUID
+
 from pydantic import BaseModel, Field
 
 from src.application.commands.process_matching import ProcessMatchingCommand
@@ -36,6 +38,9 @@ from src.application.ports.file_storage import FileStorageServiceProtocol
 
 if TYPE_CHECKING:
     from celery import Celery
+
+# Configure logger for this module
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -300,9 +305,42 @@ class ProcessMatchingUseCase:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3 - Task 3.2.1.
         """
-        raise NotImplementedError(
-            "Implementation in Phase 3 - Task 3.2.1. "
-            "This is a detailed contract (Phase 2 - Task 2.4.2)."
+        # Import process_matching_task here to avoid circular imports
+        from src.application.tasks.matching_tasks import process_matching_task
+
+        # Step 1: Validate command business rules
+        command.validate_business_rules()
+        logger.debug(
+            f"Command validation passed for files: "
+            f"{command.working_file.file_id}, {command.reference_file.file_id}"
+        )
+
+        # Steps 2-3: Validate files exist (if file_storage available)
+        if self.file_storage:
+            await self._validate_files(command)
+            logger.debug("File existence validation passed")
+
+        # Steps 4-5: Estimate processing time
+        if self.file_storage:
+            estimated_time = await self._estimate_processing_time(
+                UUID(command.working_file.file_id), UUID(command.reference_file.file_id)
+            )
+        else:
+            # Fallback if no file_storage: use default estimation
+            estimated_time = 30  # Default 30 seconds
+        logger.info(f"Estimated processing time: {estimated_time}s")
+
+        # Steps 6-8: Trigger Celery task
+        celery_data = command.to_celery_dict()
+        task_result = process_matching_task.delay(**celery_data)
+        logger.info(f"Celery task triggered: {task_result.id}")
+
+        # Steps 9-10: Create and return result
+        return ProcessMatchingResult(
+            job_id=UUID(task_result.id),
+            status=JobStatus.QUEUED,
+            estimated_time=estimated_time,
+            message=f"Matching job queued successfully. Check status at GET /jobs/{task_result.id}/status",
         )
 
     async def _validate_files(self, command: ProcessMatchingCommand) -> None:
@@ -371,9 +409,24 @@ class ProcessMatchingUseCase:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3 - Task 3.2.1.
         """
-        raise NotImplementedError(
-            "Implementation in Phase 3 - Task 3.2.1. "
-            "This is a detailed contract (Phase 2 - Task 2.4.2)."
+        # Validate working file exists
+        wf_file_id = UUID(command.working_file.file_id)
+        wf_exists = await self.file_storage.file_exists(wf_file_id, "working")
+        if not wf_exists:
+            raise FileNotFoundError(
+                f"Working file not found in uploads storage: {command.working_file.file_id}"
+            )
+
+        # Validate reference file exists
+        ref_file_id = UUID(command.reference_file.file_id)
+        ref_exists = await self.file_storage.file_exists(ref_file_id, "reference")
+        if not ref_exists:
+            raise FileNotFoundError(
+                f"Reference file not found in uploads storage: {command.reference_file.file_id}"
+            )
+
+        logger.debug(
+            f"File existence validation passed for WF={wf_file_id}, REF={ref_file_id}"
         )
 
     async def _estimate_processing_time(
@@ -469,7 +522,22 @@ class ProcessMatchingUseCase:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3 - Task 3.2.1.
         """
-        raise NotImplementedError(
-            "Implementation in Phase 3 - Task 3.2.1. "
-            "This is a detailed contract (Phase 2 - Task 2.4.2)."
+        # Get working file path from job storage
+        wf_path = self.file_storage.get_file_path(wf_file_id, "working")
+
+        # Extract metadata (includes rows_count from first sheet)
+        metadata = await self.file_storage.extract_file_metadata(wf_path)
+        rows_count = metadata["rows_count"]
+
+        # Calculate estimated time using algorithm: rows_count * 0.1s
+        estimated_time_raw = rows_count * 0.1
+
+        # Apply bounds (min=10s, max=300s)
+        estimated_time = max(10, min(300, int(estimated_time_raw)))
+
+        logger.debug(
+            f"Estimated processing time: {estimated_time}s "
+            f"(based on {rows_count} rows * 0.1s/row)"
         )
+
+        return estimated_time

@@ -30,6 +30,7 @@ CRITICAL FIX:
     This was a critical architectural error in the original version.
 """
 
+import logging
 from typing import Optional
 from uuid import UUID
 
@@ -37,11 +38,19 @@ from fastapi import APIRouter, status, HTTPException, Path, Depends
 from pydantic import BaseModel, Field
 
 # Import shared models - now from Application Layer (correct dependency direction)
-from src.application.queries.get_job_status import GetJobStatusQueryHandler
+from src.application.queries.get_job_status import (
+    GetJobStatusQueryHandler,
+    GetJobStatusQuery,
+    JobNotFoundException,
+)
 from src.application.models import JobStatus
+from src.infrastructure.persistence.redis.progress_tracker import RedisProgressTracker
 
 # Import shared API schemas
 from src.api.schemas.common import ErrorResponse
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 
 class JobStatusResponse(BaseModel):
@@ -166,10 +175,11 @@ async def get_job_status_query_handler():
         redis_tracker = get_redis_progress_tracker()
         return GetJobStatusQueryHandler(redis_tracker)
     """
-    # Implementation in Phase 3
-    raise NotImplementedError(
-        "GetJobStatusQueryHandler not implemented yet - will be added in Task 1.1.2/3.4.1"
-    )
+    # Create RedisProgressTracker instance
+    redis_tracker = RedisProgressTracker()
+
+    # Create and return GetJobStatusQueryHandler with injected dependencies
+    return GetJobStatusQueryHandler(progress_tracker=redis_tracker)
 
 
 # ============================================================================
@@ -454,7 +464,70 @@ async def get_job_status(
         This method defines the interface contract with detailed documentation.
         Actual implementation will be added in Phase 3 - Task 3.4.1.
     """
-    raise NotImplementedError(
-        "Implementation in Phase 3 - Task 3.4.1. "
-        "This is a detailed contract (Phase 2 - Task 2.4.3)."
-    )
+    # Implementation based on Phase 2 contract
+    try:
+        # Step 2: Create query object from path parameter
+        query = GetJobStatusQuery(job_id=job_id)
+        logger.debug(f"Querying status for job: {job_id}")
+
+        # Step 3-5: Execute query handler
+        result = await handler.handle(query)
+        logger.info(f"Job {job_id} status retrieved: {result.status} ({result.progress}%)")
+
+        # Step 6: Convert Application Layer DTO to API Layer Response
+        response = JobStatusResponse(
+            job_id=result.job_id,
+            status=result.status,  # Already JobStatus enum value
+            progress=result.progress,
+            message=result.message,
+            result_ready=result.result_ready,
+            current_step=result.current_step,
+            error_details=result.error_details,
+            created_at=result.created_at,
+            updated_at=result.updated_at,
+        )
+
+        # Step 7: Cache-Control header (Phase 3 - set via Response object)
+        # Note: In FastAPI, headers are typically set using Response parameter
+        # For now, we return the response directly. Cache headers can be added later.
+
+        # Step 8: Return response
+        return response
+
+    except JobNotFoundException as e:
+        # Step 9: Job not found → 404
+        logger.warning(f"Job not found: {job_id}")
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "JOB_NOT_FOUND",
+                "message": f"Job with ID {job_id} not found or expired",
+                "details": {"job_id": str(job_id)},
+            },
+        )
+
+    except ValueError as e:
+        # Invalid status value from Redis (shouldn't happen in happy path)
+        logger.error(f"Invalid status value for job {job_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "INVALID_STATUS",
+                "message": "Invalid job status value in storage",
+                "details": {"job_id": str(job_id), "error": str(e)},
+            },
+        )
+
+    except Exception as e:
+        # Step 10: Unexpected error → 500
+        logger.error(
+            f"Unexpected error retrieving job status for {job_id}: {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "INTERNAL_SERVER_ERROR",
+                "message": "An unexpected error occurred while retrieving job status",
+                "details": {"job_id": str(job_id), "error": str(e)},
+            },
+        )

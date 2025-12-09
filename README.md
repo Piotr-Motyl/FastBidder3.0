@@ -94,6 +94,21 @@ This project demonstrates production-grade architecture principles: **Clean Arch
 - [x] Task 3.6.1: RedisProgressTracker implementation (no unit tests - deferred)
 - [x] Task 3.6.2: Redis Connection Pooling implementation (no unit tests - deferred)
 
+**Sprint 3.7: Application Layer - Commands & Use Cases** ✅ **COMPLETED**
+- [x] Task 3.7.1: ProcessMatchingCommand implementation (no unit tests - deferred)
+- [x] Task 3.7.2: ProcessMatchingUseCase implementation (no unit tests - deferred)
+- [x] Task 3.7.3: GetJobStatusQuery & Handler implementation (no unit tests - deferred)
+
+**Sprint 3.8: Application Layer - Celery Task** ✅ **COMPLETED**
+- [x] Task 3.8.1: process_matching_task implementation (no unit tests - deferred)
+
+**Sprint 3.9: API Layer - REST Endpoints** ✅ **COMPLETED**
+- [x] Task 3.9.1: Upload endpoint implementation (no unit tests - deferred)
+- [x] Task 3.9.2: Process endpoint implementation (no unit tests - deferred)
+- [x] Task 3.9.3: Status endpoint implementation (no unit tests - deferred)
+- [x] Task 3.9.4: Download results endpoint implementation (no unit tests - deferred)
+- [x] Task 3.9.5: FastAPI app setup + error handling (no unit tests - deferred)
+
 ### 📋 Phases Overview
 
 ```

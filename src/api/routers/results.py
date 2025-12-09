@@ -26,6 +26,7 @@ Phase 1 Note:
     All endpoints raise NotImplementedError.
 """
 
+import logging
 from typing import Optional
 from uuid import UUID
 
@@ -40,6 +41,9 @@ from src.application.models import JobStatus
 
 # Import shared API schemas
 from src.api.schemas.common import ErrorResponse
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -79,10 +83,8 @@ def get_file_storage_service() -> FileStorageService:
     Example implementation (Phase 3):
         return FileStorageService()
     """
-    # Implementation in Phase 3
-    raise NotImplementedError(
-        "FileStorageService dependency not implemented yet - will be added in Task 3.4.1"
-    )
+    # Create and return FileStorageService instance
+    return FileStorageService()
 
 
 def get_progress_tracker() -> RedisProgressTracker:
@@ -99,10 +101,8 @@ def get_progress_tracker() -> RedisProgressTracker:
     Example implementation (Phase 3):
         return RedisProgressTracker()
     """
-    # Implementation in Phase 3
-    raise NotImplementedError(
-        "RedisProgressTracker dependency not implemented yet - will be added in Task 3.4.1"
-    )
+    # Create and return RedisProgressTracker instance
+    return RedisProgressTracker()
 
 
 # ============================================================================
@@ -389,7 +389,88 @@ async def download_result(
         This method defines the interface contract with detailed documentation.
         Actual implementation will be added in Phase 3 - Task 3.4.1.
     """
-    raise NotImplementedError(
-        "Implementation in Phase 3 - Task 3.4.1. "
-        "This is a detailed contract (Phase 2 - Task 2.4.4)."
-    )
+    # Implementation based on Phase 2 contract
+    try:
+        # Step 2: Verify job exists in Redis
+        job_id_str = str(job_id)
+        progress_data = progress_tracker.get_status(job_id_str)
+
+        if not progress_data:
+            logger.warning(f"Job not found for download: {job_id_str}")
+            raise HTTPException(
+                status_code=404,
+                detail=ErrorResponse(
+                    code="JOB_NOT_FOUND",
+                    message=f"Job with ID {job_id} not found or expired",
+                    details={"job_id": job_id_str},
+                ).dict(),
+            )
+
+        # Step 3: Verify job status is COMPLETED
+        job_status = progress_data.get("status")
+        if job_status != "completed":
+            logger.warning(
+                f"Attempted download of non-completed job {job_id_str}: status={job_status}"
+            )
+            raise HTTPException(
+                status_code=404,
+                detail=ErrorResponse(
+                    code="JOB_NOT_COMPLETED",
+                    message=(
+                        f"Job is not completed yet. Current status: {job_status}. "
+                        f"Poll GET /jobs/{job_id}/status until completed."
+                    ),
+                    details={"job_id": job_id_str, "current_status": job_status},
+                ).dict(),
+            )
+
+        # Step 4-5: Get result file path and verify existence
+        result_path = file_storage.get_result_file_path(job_id)
+
+        if not file_storage.result_file_exists(job_id):
+            logger.error(
+                f"Result file not found for completed job {job_id_str}: {result_path}"
+            )
+            raise HTTPException(
+                status_code=404,
+                detail=ErrorResponse(
+                    code="RESULT_FILE_NOT_FOUND",
+                    message=(
+                        f"Result file not found for job {job_id}. "
+                        "The job may have failed or been interrupted."
+                    ),
+                    details={"job_id": job_id_str},
+                ).dict(),
+            )
+
+        # Step 6-8: Prepare response with headers
+        filename = "result.xlsx"  # Phase 2: static filename
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+        logger.info(f"Serving result file for job {job_id_str}: {result_path}")
+
+        # Step 9: Return FileResponse (FastAPI handles file streaming)
+        return FileResponse(
+            path=result_path,
+            media_type=media_type,
+            filename=filename,  # Sets Content-Disposition: attachment; filename="..."
+        )
+
+    except HTTPException:
+        # Re-raise HTTPExceptions (already formatted)
+        raise
+
+    except Exception as e:
+        # Step 10: Handle unexpected errors
+        logger.error(
+            f"Unexpected error downloading result for job {job_id}: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=ErrorResponse(
+                code="INTERNAL_SERVER_ERROR",
+                message="An unexpected error occurred while downloading result file",
+                details={"job_id": str(job_id), "error": str(e)},
+            ).dict(),
+        )
