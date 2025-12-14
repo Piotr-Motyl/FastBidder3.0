@@ -349,7 +349,7 @@ class ProcessMatchingUseCase:
         # Step 8: Trigger Celery task with custom task_id (same as job_id)
         # Using apply_async() instead of delay() to specify custom task_id
         celery_data = command.to_celery_dict()
-        task_result = process_matching_task.apply_async(
+        task_result = process_matching_task.apply_async(  # type: ignore[attr-defined]
             kwargs=celery_data,
             task_id=job_id,  # Use our pre-generated job_id
         )

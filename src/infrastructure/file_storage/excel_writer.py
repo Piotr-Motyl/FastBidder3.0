@@ -451,7 +451,10 @@ class ExcelWriterService:
         """
         # If sheet_name not specified, use active sheet (first sheet)
         if sheet_name is None:
-            return workbook.active
+            worksheet = workbook.active
+            if worksheet is None:
+                raise ValueError("Workbook has no active sheet")
+            return worksheet
 
         # Get worksheet by name
         try:

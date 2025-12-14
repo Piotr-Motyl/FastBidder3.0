@@ -282,6 +282,8 @@ class RedisProgressTracker:
             >>> tracker = RedisProgressTracker()
             >>> tracker.start_job("job-123", "Starting matching process", total_items=1000)
         """
+        # Initialize progress_data before try block (for except block reference)
+        progress_data = {}
         try:
             # Prepare progress data with initial status
             progress_data = {
@@ -379,6 +381,8 @@ class RedisProgressTracker:
         if not 0 <= progress <= 100:
             raise ValueError(f"Progress must be 0-100, got {progress}")
 
+        # Initialize progress_data before try block (for except block reference)
+        progress_data = {}
         try:
             # Get current progress to preserve some fields
             current = self.get_status(job_id)
@@ -575,6 +579,8 @@ class RedisProgressTracker:
             ...     "File not found: working_file.xlsx"
             ... )
         """
+        # Initialize progress_data before try block (for except block reference)
+        progress_data = {}
         try:
             # Get current progress to preserve progress/message
             current = self.get_status(job_id)
