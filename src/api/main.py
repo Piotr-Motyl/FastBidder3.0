@@ -48,7 +48,6 @@ from src.api.schemas.common import ErrorResponse
 from src.domain.shared.exceptions import (
     DomainException,
     InvalidDNValueError,
-    InvalidPNValueError,
     IncompatibleDNPNError,
     InvalidHVACDescriptionError,
     InvalidProcessMatchingCommandError,

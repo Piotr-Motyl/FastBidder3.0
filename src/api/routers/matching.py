@@ -35,7 +35,12 @@ from fastapi import APIRouter, status, HTTPException, Depends
 from pydantic import BaseModel, Field
 
 from src.application.models import JobStatus, MatchingStrategy, ReportFormat
-from src.application.commands.process_matching import ProcessMatchingCommand
+from src.application.commands.process_matching import (
+    ProcessMatchingCommand,
+    WorkingFileConfig,
+    ReferenceFileConfig,
+    Range,
+)
 from src.application.services.process_matching_use_case import ProcessMatchingUseCase
 from src.infrastructure.file_storage.file_storage_service import FileStorageService
 
@@ -49,34 +54,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 # REQUEST/RESPONSE MODELS
 # ============================================================================
-
-
-class Range(BaseModel):
-    """Range of rows in Excel (1-based indexing like Excel)."""
-
-    start: int = Field(ge=1, description="Start row (Excel notation, 1-based)")
-    end: int = Field(ge=1, description="End row (Excel notation, 1-based)")
-
-
-class WorkingFileConfig(BaseModel):
-    """Configuration for working file (file to be priced)."""
-
-    file_id: str = Field(description="UUID of working file as string")
-    description_column: str = Field(description="Column with descriptions (e.g., 'C')")
-    description_range: Range = Field(description="Range of rows with descriptions")
-    price_target_column: str = Field(description="Column where prices will be written")
-    matching_report_column: Optional[str] = Field(
-        default=None, description="Column for match report (score + matched item name)"
-    )
-
-
-class ReferenceFileConfig(BaseModel):
-    """Configuration for reference file (price catalog)."""
-
-    file_id: str = Field(description="UUID of reference file as string")
-    description_column: str = Field(description="Column with descriptions (e.g., 'B')")
-    description_range: Range = Field(description="Range of rows with descriptions")
-    price_source_column: str = Field(description="Column with prices to copy")
+# Note: WorkingFileConfig, ReferenceFileConfig, Range imported from Application layer
 
 
 class ProcessMatchingRequest(BaseModel):

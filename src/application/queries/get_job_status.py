@@ -262,6 +262,8 @@ class GetJobStatusQueryHandler:
         logger.debug(f"Retrieving status for job: {job_id_str}")
 
         # Step 2: Fetch from Redis via progress_tracker
+        if self.progress_tracker is None:
+            raise RuntimeError("RedisProgressTracker not initialized")
         progress_data = self.progress_tracker.get_status(job_id_str)
 
         # Step 3: Check if exists

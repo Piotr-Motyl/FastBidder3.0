@@ -274,6 +274,10 @@ class SimpleMatchingEngine:
         confidence = self.calculate_confidence(best_score, second_best_score)
 
         # Step 7: Generate human-readable explanation
+        # Type guard: best_ref.extracted_params should not be None at this point
+        # (checked earlier in loop), but added for type safety
+        if best_ref.extracted_params is None:
+            raise RuntimeError("Best reference has no extracted parameters")
         message = self.generate_explanation(
             source_params,
             best_ref.extracted_params,

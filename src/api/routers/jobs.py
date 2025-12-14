@@ -406,7 +406,7 @@ async def get_job_status(
             # Step 6: Convert Application Layer DTO to API Layer Response
             response = JobStatusResponse(
                 job_id=result.job_id,
-                status=result.status,  # Already JobStatus enum value
+                status=JobStatus(result.status),  # Convert string to JobStatus enum
                 progress=result.progress,
                 message=result.message,
                 result_ready=result.result_ready,
@@ -477,7 +477,7 @@ async def get_job_status(
         # Step 6: Convert Application Layer DTO to API Layer Response
         response = JobStatusResponse(
             job_id=result.job_id,
-            status=result.status,  # Already JobStatus enum value
+            status=JobStatus(result.status),  # Convert string to JobStatus enum
             progress=result.progress,
             message=result.message,
             result_ready=result.result_ready,
