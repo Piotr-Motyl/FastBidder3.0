@@ -109,8 +109,10 @@ This project demonstrates production-grade architecture principles: **Clean Arch
 - [x] Task 3.9.4: Download results endpoint implementation (no unit tests - deferred)
 - [x] Task 3.9.5: FastAPI app setup + error handling (no unit tests - deferred)
 
-**Sprint 3.10: End-to-End Testing** 🚧 **IN PROGRESS**
-- [x] Task 3.10.1: Fixtures - sample Excel files (working: 20 rows, reference: 50 rows)
+**Sprint 3.10: End-to-End Testing** ✅ **COMPLETED**
+- [x] Task 3.10.1: Fixtures - sample Excel files (4 files: working + reference + performance)
+- [x] Task 3.10.2: E2E Test - Full workflow (upload → process → download) **PASSING**
+- [x] Task 3.10.3: Performance baseline test (100 items)
 
 ### 📋 Phases Overview
 
@@ -118,10 +120,10 @@ This project demonstrates production-grade architecture principles: **Clean Arch
 Phase 0: Setup                ✅ Done
 Phase 1: High-Level Contracts ✅ Done
 Phase 2: Detailed Contracts   ✅ Done
-Phase 3: Implementation       ✅ Done (Core Domain Layer - Sprints 3.1, 3.2, 3.3)
+Phase 3: Implementation       ✅ Done (All Sprints 3.1-3.10: Domain + Infra + App + API + E2E)
 Phase 4: AI Integration       ⏳ Pending (Semantic matching)
 Phase 5: Advanced Features    ⏳ Pending (Batch, optimization)
-Phase 6: Testing & Docs       ⏳ Pending (Unit, integration, E2E)
+Phase 6: Testing & Docs       🚧 Partial (E2E ✅, Unit for API/App ⏳ Deferred)
 ```
 
 **Next Steps:** Phase 4 - AI Integration (Semantic matching with sentence-transformers)
@@ -479,9 +481,9 @@ fastbidder/
 ├── pyproject.toml                    # Poetry dependencies
 ├── poetry.lock
 ├── .env                              # Environment variables
-├── .env.example
-├── ROADMAP.md                        # Detailed implementation plan
-├── Implementation_plan.md            # Sprint breakdown
+├── .env.example                      # Config template (safe for repo)
+├── ROADMAP.md                        # High-level roadmap
+├── IMPL_PLAN.md                      # Detailed sprint-by-sprint plan
 └── README.md
 
 Legend:
@@ -598,30 +600,31 @@ Legend:
 
 | File | Responsibility | Status | Key Components |
 |------|---------------|--------|----------------|
-| `api/routers/matching.py` | Trigger async matching process | 📝 Contract | `POST /matching/process` |
-| `api/routers/jobs.py` | Query job status | 📝 Contract | `GET /jobs/{job_id}/status` |
-| `api/routers/files.py` | File upload endpoints | 📝 Contract | `POST /files/upload` |
-| `api/routers/results.py` | Result download | 📝 Contract | `GET /results/{job_id}/download` |
-| `api/schemas/common.py` | Shared response schemas | 📝 Contract | `ErrorResponse` |
+| `api/routers/matching.py` | Trigger async matching process | ✅ Implemented | `POST /matching/process` |
+| `api/routers/jobs.py` | Query job status | ✅ Implemented | `GET /jobs/{job_id}/status` |
+| `api/routers/files.py` | File upload endpoints | ✅ Implemented | `POST /files/upload` |
+| `api/routers/results.py` | Result download | ✅ Implemented | `GET /results/{job_id}/download` |
+| `api/schemas/common.py` | Shared response schemas | ✅ Implemented | `ErrorResponse` |
 
 ### 🎯 Application Layer (Use Cases)
 
 | File | Responsibility | Status | Key Components |
 |------|---------------|--------|----------------|
-| `commands/process_matching.py` | CQRS Write command | 📝 Contract | `ProcessMatchingCommand` |
-| `queries/get_job_status.py` | CQRS Read query + handler | 📝 Contract | `GetJobStatusQuery`, `GetJobStatusQueryHandler` |
-| `services/process_matching_use_case.py` | Orchestrates matching flow | 📝 Contract | `ProcessMatchingUseCase` |
-| `services/file_upload_use_case.py` | File validation & storage | 📝 Contract | `FileUploadUseCase` |
-| `tasks/celery_app.py` | Celery configuration | ✅ Working | `celery_app`, `health_check` task |
-| `tasks/matching_tasks.py` | Async matching task | 📝 Contract | `process_matching_task` |
-| `ports/file_storage.py` | File storage Protocol | 📝 Contract | `FileStorageServiceProtocol` |
-| `models.py` | Shared models & enums | 📝 Contract | `JobStatus`, `MatchingStrategy`, `ReportFormat` |
+| `commands/process_matching.py` | CQRS Write command | ✅ Implemented | `ProcessMatchingCommand` |
+| `queries/get_job_status.py` | CQRS Read query + handler | ✅ Implemented | `GetJobStatusQuery`, `JobStatusResult` |
+| `services/process_matching_use_case.py` | Orchestrates matching flow | ✅ Implemented | `ProcessMatchingUseCase` |
+| `services/file_upload_use_case.py` | File validation & storage | ✅ Implemented | `FileUploadUseCase` |
+| `tasks/celery_app.py` | Celery configuration | ✅ Implemented | `celery_app`, `health_check` |
+| `tasks/matching_tasks.py` | Async matching task | ✅ Implemented | `process_matching_task` |
+| `ports/file_storage.py` | File storage Protocol | ✅ Implemented | `FileStorageServiceProtocol` |
+| `models.py` | Shared models & enums | ✅ Implemented | `JobStatus`, `MatchingStrategy`, `ReportFormat` |
 
 ### 🧬 Domain Layer (Business Logic)
 
 | File | Responsibility | Status | Key Components |
 |------|---------------|--------|----------------|
-| `entities/hvac_description.py` | Core domain entity | 📝 Contract | `HVACDescription` |
+| `entities/hvac_description.py` | Core domain entity | ✅ Implemented | `HVACDescription` (99% cov, 42 tests) |
+| `matching_config.py` | Configuration dataclass | ✅ Implemented | `MatchingConfig` (100% cov, 19 tests) |
 | `value_objects/diameter_nominal.py` | DN Value Object | ✅ Implemented | `DiameterNominal` (98% coverage) |
 | `value_objects/pressure_nominal.py` | PN Value Object | ✅ Implemented | `PressureNominal` (90% coverage) |
 | `value_objects/extracted_parameters.py` | Technical parameters | ✅ Implemented | `ExtractedParameters` (100% coverage) |
@@ -677,21 +680,23 @@ make docker-up
 make docker-health
 ```
 
-### ✅ Verification (under implementation)
+### ✅ Verification
 
 ```bash
 # Check Redis connection
 docker exec fastbidder_redis redis-cli PING
 # Expected: PONG
 
-# Check Celery worker
-docker exec fastbidder_celery_worker celery -A src.application.tasks inspect ping
-# Expected: celery@hostname: OK
+# Check Celery worker (in hybrid mode: run locally, not in Docker)
+celery -A src.application.tasks inspect ping
+# Expected: pong from celery@<hostname>
 
-# Check Flower UI (Celery monitoring)
-open http://localhost:5555
-# Expected: Flower dashboard with active workers
+# Start Flower UI for monitoring (optional)
+make celery-flower
+# Then open: http://localhost:5555
 ```
+
+**Note:** In hybrid development mode, Celery worker runs **locally** (not in Docker). Start with: `make celery-worker`
 
 ---
 
@@ -759,11 +764,17 @@ ALLOWED_EXTENSIONS=.xlsx,.xls
 TEMP_DIR=/tmp/fastbidder
 ```
 
-### 🐳 Docker Services
+### 🐳 Docker Services (Hybrid Development Mode)
 
-- **Redis**: `localhost:6379` (DB 0: Celery broker, DB 1: Results)
-- **Flower UI**: `http://localhost:5555` (Celery monitoring)
-- **FastAPI**: `http://localhost:8000` (when running locally)
+**Running in Docker:**
+- **Redis**: `localhost:6379` (DB 0: Celery broker, DB 1: Results, DB 2+: Progress tracking)
+
+**Running Locally** (for faster development):
+- **Celery Worker**: `make celery-worker`
+- **Flower UI**: `make celery-flower` → `http://localhost:5555`
+- **FastAPI**: `make run` → `http://localhost:8000`
+
+**Why Hybrid?** No container rebuild after code changes, hot-reload works, easier debugging.
 
 ---
 

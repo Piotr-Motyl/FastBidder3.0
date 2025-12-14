@@ -35,7 +35,6 @@ import os
 import time
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
 from uuid import UUID
 
 import psutil
@@ -649,6 +648,7 @@ def process_matching_task(
         wf_df.columns.values[score_col_idx] = "Match Score"
 
         # Add matching report column if specified (column D - after score)
+        report_col_idx = None  # Initialize to prevent unbound variable warning
         if working_file.get("matching_report_column"):
             report_col_idx = ProcessMatchingCommand.column_to_index(
                 working_file["matching_report_column"]
@@ -730,7 +730,9 @@ def process_matching_task(
 
                     # Write match score to Match Score column (column C)
                     score_col_idx = target_col_idx + 1
-                    wf_df.iloc[target_row, score_col_idx] = match_result.score.final_score
+                    wf_df.iloc[target_row, score_col_idx] = (
+                        match_result.score.final_score
+                    )
 
                     # Write match report if column specified
                     if working_file.get("matching_report_column"):
