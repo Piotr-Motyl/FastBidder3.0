@@ -1,6 +1,30 @@
-version: '3.8'
+# ============================================================================
+# FastBidder Docker Compose Configuration
+# ============================================================================
+#
+# CURRENT MODE: HYBRID (Development)
+# - Infrastructure (Redis) runs in Docker
+# - Application code (Celery worker, FastAPI) runs locally
+#
+# WHY HYBRID MODE FOR DEVELOPMENT:
+# - Faster development (no container rebuild after code changes)
+# - Easier debugging (direct access to logs and debugger)
+# - Hot-reload works out of the box
+#
+# TO SWITCH TO PRODUCTION MODE (all in Docker):
+# 1. Uncomment the "celery_worker" service below (lines 35-57)
+# 2. Uncomment "celery_worker" dependency in flower service (line 75)
+# 3. Run: docker-compose up -d
+# 4. Stop local Celery worker if running
+#
+# ============================================================================
 
 services:
+  # ============================================================================
+  # REDIS - Message Broker & Result Backend
+  # ============================================================================
+  # Always runs in Docker (both dev and production)
+
   redis:
     image: redis:7-alpine
     container_name: fastbidder_redis
@@ -17,25 +41,38 @@ services:
       timeout: 3s
       retries: 3
 
-  celery_worker:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-    container_name: fastbidder_celery_worker
-    command: celery -A src.application.tasks worker --loglevel=info
-    volumes:
-      - ./src:/app/src
-      - ./logs:/app/logs
-      - /tmp/fastbidder:/tmp/fastbidder # For local file storage
-    environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/1
-      - PYTHONPATH=/app
-    depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - fastbidder_network
+  # ============================================================================
+  # CELERY WORKER - Background Task Processor
+  # ============================================================================
+  # DEVELOPMENT MODE: Commented out - run locally with: make celery-worker
+  # PRODUCTION MODE: Uncomment lines below
+  # ============================================================================
+
+  # celery_worker:
+  #   build:
+  #     context: .
+  #     dockerfile: docker/Dockerfile
+  #   container_name: fastbidder_celery_worker
+  #   command: celery -A src.application.tasks worker --loglevel=info
+  #   volumes:
+  #     - ./src:/app/src
+  #     - ./logs:/app/logs
+  #     - /tmp/fastbidder:/tmp/fastbidder # For local file storage
+  #   environment:
+  #     - CELERY_BROKER_URL=redis://redis:6379/0
+  #     - CELERY_RESULT_BACKEND=redis://redis:6379/1
+  #     - PYTHONPATH=/app
+  #   depends_on:
+  #     redis:
+  #       condition: service_healthy
+  #   networks:
+  #     - fastbidder_network
+
+  # ============================================================================
+  # FLOWER - Celery Monitoring Dashboard
+  # ============================================================================
+  # Web UI for monitoring Celery tasks at http://localhost:5555
+  # Works with both local and containerized Celery workers
 
   flower:
     image: mher/flower:2.0
@@ -48,13 +85,22 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
     depends_on:
       - redis
-      - celery_worker
+      # PRODUCTION MODE: Uncomment line below
+      # - celery_worker
     networks:
       - fastbidder_network
+
+# ============================================================================
+# NETWORKS
+# ============================================================================
 
 networks:
   fastbidder_network:
     driver: bridge
+
+# ============================================================================
+# VOLUMES
+# ============================================================================
 
 volumes:
   redis_data:

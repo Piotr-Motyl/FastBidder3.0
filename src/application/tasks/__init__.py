@@ -16,5 +16,6 @@ Does NOT contain:
 """
 
 from .celery_app import celery_app, health_check
+from .matching_tasks import process_matching_task
 
-__all__ = ["celery_app", "health_check"]
+__all__ = ["celery_app", "health_check", "process_matching_task"]

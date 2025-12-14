@@ -41,6 +41,9 @@ httpx = "^0.25.0"  # Async HTTP client
 # Monitoring & Logging
 structlog = "^23.2.0"  # Structured logging
 prometheus-client = "^0.18.0"  # Metrics
+psutil = "^7.1.3"
+pyarrow = "^22.0.0"
+pandas = "^2.3.3"
 
 [tool.poetry.group.dev.dependencies]
 # Testing

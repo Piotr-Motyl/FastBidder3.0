@@ -289,7 +289,31 @@ class FileUploadUseCase:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3.
         """
-        raise NotImplementedError(
-            "execute() to be implemented in Phase 3. "
-            "Will orchestrate: generate file_id → save file → extract metadata → extract preview → return result."
+        # 1. Generate unique file_id
+        file_id = uuid4()
+
+        # 2. Get current timestamp for upload_time
+        upload_time = datetime.now().isoformat()
+
+        # 3. Save file to uploads/{file_id}/
+        file_path = await self.file_storage.save_uploaded_file(
+            file_id=file_id, file_data=file_data, filename=filename
+        )
+
+        # 4. Extract metadata (sheets, rows, columns, size)
+        metadata = await self.file_storage.extract_file_metadata(file_path)
+
+        # 5. Extract preview (first 5 rows)
+        preview = await self.file_storage.extract_file_preview(file_path, rows=5)
+
+        # 6. Construct and return result
+        return FileUploadResult(
+            file_id=str(file_id),  # Convert UUID to string for JSON serialization
+            filename=metadata["filename"],
+            size_mb=metadata["size_mb"],
+            sheets_count=metadata["sheets_count"],
+            rows_count=metadata["rows_count"],
+            columns_count=metadata["columns_count"],
+            upload_time=upload_time,
+            preview=preview,
         )

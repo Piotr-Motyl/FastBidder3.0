@@ -114,6 +114,28 @@ class FileStorageServiceProtocol(Protocol):
         """
         ...
 
+    def get_uploaded_file_path(self, file_id: UUID) -> Path:
+        """
+        Get path to uploaded file in upload storage.
+
+        Returns path to uploaded file directory. File may or may not exist.
+        Used by ProcessMatchingUseCase for file validation before job processing.
+
+        Storage path: /tmp/fastbidder/uploads/{file_id}/
+
+        Args:
+            file_id: UUID of uploaded file
+
+        Returns:
+            Path to uploaded file directory (not validated for existence)
+
+        Note:
+            This returns directory path, not full file path.
+            Caller must list directory to find actual filename.
+            For job storage files, use get_file_path(job_id, file_type) instead.
+        """
+        ...
+
     # ========================================
     # Job Storage Methods ({job_id}/input|output/)
     # ========================================

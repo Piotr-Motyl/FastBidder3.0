@@ -631,6 +631,40 @@ class ExcelReaderService:
 
         return descriptions
 
+    def read_excel_to_dataframe(
+        self, file_path: Path, sheet_name: Optional[str] = None
+    ):
+        """
+        Read Excel file directly as Pandas DataFrame (helper for matching tasks).
+
+        Simplified method for matching_tasks.py that needs direct DataFrame access.
+        Uses internal caching mechanism from _load_excel_dataframe().
+
+        Note:
+            Returns Pandas DataFrame (not Polars) for compatibility with
+            matching_tasks.py which uses Pandas API (.iloc, .tolist()).
+
+        Args:
+            file_path: Path to Excel file
+            sheet_name: Sheet name (None = first sheet)
+
+        Returns:
+            Pandas DataFrame with all data from Excel
+
+        Raises:
+            FileNotFoundError: If file doesn't exist
+            FileSizeExceededError: If file > 10MB
+            ExcelParsingError: If cannot parse Excel
+        """
+        # Validate file size
+        self._validate_file_size(file_path)
+
+        # Load Polars DataFrame (uses cache)
+        polars_df = self._load_excel_dataframe(file_path, sheet_name)
+
+        # Convert to Pandas for matching_tasks compatibility
+        return polars_df.to_pandas()
+
     def _clear_cache(self) -> None:
         """
         Clear DataFrame cache to free memory.

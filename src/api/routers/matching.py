@@ -445,9 +445,10 @@ async def process_matching(
     # Implementation based on Phase 2 contract
     try:
         # Step 2: Convert request to Command
+        # Convert API layer Pydantic models to dict for Application layer
         command = ProcessMatchingCommand(
-            working_file=request.working_file,
-            reference_file=request.reference_file,
+            working_file=request.working_file.model_dump(),
+            reference_file=request.reference_file.model_dump(),
             matching_threshold=request.matching_threshold,
             matching_strategy=request.matching_strategy,
             report_format=request.report_format,

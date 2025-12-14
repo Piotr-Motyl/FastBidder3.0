@@ -136,12 +136,26 @@ def trigger_matching(
     Raises:
         AssertionError: If trigger fails
     """
+    # Build request according to API schema (ProcessMatchingRequest)
+    # Working file: 20 descriptions in column A, rows 2-21 (header in row 1)
+    # Reference file: 50 descriptions in column A, prices in column B, rows 2-51
     payload = {
-        "working_file_id": working_file_id,
-        "reference_file_id": reference_file_id,
-        "threshold": threshold,
-        "matching_strategy": "HYBRID",
-        "report_format": "DETAILED",
+        "working_file": {
+            "file_id": working_file_id,
+            "description_column": "A",
+            "description_range": {"start": 2, "end": 21},
+            "price_target_column": "B",
+            "matching_report_column": "C",
+        },
+        "reference_file": {
+            "file_id": reference_file_id,
+            "description_column": "A",
+            "description_range": {"start": 2, "end": 51},
+            "price_source_column": "B",
+        },
+        "matching_threshold": threshold,
+        "matching_strategy": "best_match",  # lowercase enum value
+        "report_format": "detailed",  # lowercase enum value
     }
 
     response = test_client.post("/api/matching/process", json=payload)
@@ -429,8 +443,8 @@ def test_full_workflow_happy_path(
     )
 
     job_id = process_response["job_id"]
-    assert process_response["status"] == "QUEUED", (
-        f"Expected status QUEUED, got {process_response['status']}"
+    assert process_response["status"] == "queued", (
+        f"Expected status queued, got {process_response['status']}"
     )
 
     # ========================================================================

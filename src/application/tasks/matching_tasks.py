@@ -31,12 +31,32 @@ Phase 2 Extensions:
 """
 
 import logging
+import os
 import time
+from datetime import datetime
+from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
+import psutil
 from celery import Task
+from celery.exceptions import SoftTimeLimitExceeded
 
 from .celery_app import celery_app
+from src.application.commands.process_matching import ProcessMatchingCommand
+from src.application.models import MatchingStrategy, ReportFormat
+from src.domain.hvac.entities.hvac_description import HVACDescription
+from src.domain.hvac.services.concrete_parameter_extractor import (
+    ConcreteParameterExtractor,
+)
+from src.domain.hvac.services.simple_matching_engine import SimpleMatchingEngine
+from src.domain.hvac.matching_config import MatchingConfig
+from src.infrastructure.file_storage.excel_reader import ExcelReaderService
+from src.infrastructure.file_storage.excel_writer import ExcelWriterService
+from src.infrastructure.file_storage.file_storage_service import FileStorageService
+from src.infrastructure.persistence.redis.progress_tracker import (
+    RedisProgressTracker,
+)
 
 # Configure logger for this module
 logger = logging.getLogger(__name__)
@@ -442,27 +462,6 @@ def process_matching_task(
     #         logger.error(f"Job {job_id}: Cleanup failed: {cleanup_exc}")
 
     # Implementation based on Phase 2 contract
-    import os
-    import psutil
-    from datetime import datetime
-    from uuid import UUID
-    from celery.exceptions import SoftTimeLimitExceeded
-
-    from src.application.commands.process_matching import ProcessMatchingCommand
-    from src.application.models import MatchingStrategy, ReportFormat
-    from src.domain.hvac.entities.hvac_description import HVACDescription
-    from src.domain.hvac.services.concrete_parameter_extractor import (
-        ConcreteParameterExtractor,
-    )
-    from src.domain.hvac.services.simple_matching_engine import SimpleMatchingEngine
-    from src.domain.hvac.value_objects.matching_config import MatchingConfig
-    from src.infrastructure.file_storage.excel_reader_service import ExcelReaderService
-    from src.infrastructure.file_storage.excel_writer_service import ExcelWriterService
-    from src.infrastructure.file_storage.file_storage_service import FileStorageService
-    from src.infrastructure.persistence.redis.progress_tracker import (
-        RedisProgressTracker,
-    )
-
     # Initialize tracking variables
     start_time = time.time()
     job_id = self.request.id
@@ -495,6 +494,21 @@ def process_matching_task(
             stage, f"{message} ({current}/{total})" if total > 0 else message
         )
 
+    # Initialize variables before try block to avoid UnboundLocalError in except/finally
+    file_storage = None
+    excel_writer = None
+    excel_reader = None
+    progress_tracker = None
+    wf_df = None
+    ref_df = None
+    wf_descriptions = None
+    ref_descriptions = None
+    matches_count = 0
+    rows_processed = 0
+    rows_matched = 0
+    partial_results = False
+    start_time = time.time()
+
     try:
         # ===== STAGE 1: START (0%) =====
         update_progress(0, "Task started", "START")
@@ -519,18 +533,39 @@ def process_matching_task(
         # ===== STAGE 2: FILES_LOADED (10%) =====
         update_progress(10, "Loading files from storage", "FILES_LOADED")
 
-        # Get file paths from storage
+        # Get file paths from UPLOAD storage (not job storage)
+        # Files are in /tmp/fastbidder/uploads/{file_id}/ after upload
         wf_file_id = UUID(working_file["file_id"])
         ref_file_id = UUID(reference_file["file_id"])
-        wf_path = file_storage.get_file_path(wf_file_id, "working")
-        ref_path = file_storage.get_file_path(ref_file_id, "reference")
+
+        # Get upload directories
+        wf_upload_dir = file_storage.get_uploaded_file_path(wf_file_id)
+        ref_upload_dir = file_storage.get_uploaded_file_path(ref_file_id)
+
+        # Find the uploaded files (original filename is preserved in upload storage)
+        wf_files = list(wf_upload_dir.glob("*.xlsx"))
+        ref_files = list(ref_upload_dir.glob("*.xlsx"))
+
+        if not wf_files:
+            raise FileNotFoundError(
+                f"No working file found in upload directory: {wf_upload_dir}"
+            )
+        if not ref_files:
+            raise FileNotFoundError(
+                f"No reference file found in upload directory: {ref_upload_dir}"
+            )
+
+        wf_path = wf_files[0]
+        ref_path = ref_files[0]
 
         # Load Excel DataFrames
         wf_df = excel_reader.read_excel_to_dataframe(wf_path)
         ref_df = excel_reader.read_excel_to_dataframe(ref_path)
 
         # ===== STAGE 3: DESCRIPTIONS_EXTRACTED (30%) =====
-        update_progress(30, "Extracting descriptions from Excel", "DESCRIPTIONS_EXTRACTED")
+        update_progress(
+            30, "Extracting descriptions from Excel", "DESCRIPTIONS_EXTRACTED"
+        )
 
         # Extract descriptions from working file
         wf_col_idx = ProcessMatchingCommand.column_to_index(
@@ -578,8 +613,9 @@ def process_matching_task(
         for idx, (text, price) in enumerate(zip(ref_raw_texts, ref_prices)):
             desc = HVACDescription(raw_text=str(text) if text else "")
             desc.extract_parameters(parameter_extractor)
+            # Set price directly as field (HVACDescription is a dataclass)
             if price and price != "":
-                desc.set_price(float(price))
+                desc.matched_price = Decimal(str(price))
             ref_descriptions.append(desc)
 
         # ===== STAGE 5: MATCHING (50-90%) =====
@@ -604,23 +640,41 @@ def process_matching_task(
                 # Apply match result to working description
                 wf_desc.apply_match_result(match_result)
 
-                # Write price to target column (Excel 1-based row)
-                target_row = wf_range_start + wf_idx
-                target_col_idx = ProcessMatchingCommand.column_to_index(
-                    working_file["price_target_column"]
+                # Find matched reference description by ID
+                matched_ref_desc = next(
+                    (
+                        desc
+                        for desc in ref_descriptions
+                        if desc.id == match_result.matched_reference_id
+                    ),
+                    None,
                 )
-                wf_df.iloc[target_row, target_col_idx] = match_result.matched_price
 
-                # Write match report if column specified
-                if working_file.get("matching_report_column"):
-                    report_text = f"Match: {match_result.matched_description.raw_text[:50]}... | Score: {match_result.match_score.total_score:.1f}%"
-                    report_col_idx = ProcessMatchingCommand.column_to_index(
-                        working_file["matching_report_column"]
+                if matched_ref_desc:
+                    # Write price to target column (Excel 1-based row)
+                    target_row = wf_range_start + wf_idx
+                    target_col_idx = ProcessMatchingCommand.column_to_index(
+                        working_file["price_target_column"]
                     )
-                    wf_df.iloc[target_row, report_col_idx] = report_text
+                    # Get price from matched reference (convert Decimal to float for Excel)
+                    price_value = (
+                        float(matched_ref_desc.matched_price)
+                        if matched_ref_desc.matched_price
+                        else ""
+                    )
+                    wf_df.iloc[target_row, target_col_idx] = price_value
 
-                matches_count += 1
-                rows_matched += 1
+                    # Write match report if column specified
+                    if working_file.get("matching_report_column"):
+                        # Use score.final_score (not total_score)
+                        report_text = f"Match: {matched_ref_desc.raw_text[:50]}... | Score: {match_result.score.final_score:.1f}%"
+                        report_col_idx = ProcessMatchingCommand.column_to_index(
+                            working_file["matching_report_column"]
+                        )
+                        wf_df.iloc[target_row, report_col_idx] = report_text
+
+                    matches_count += 1
+                    rows_matched += 1
 
             # Update progress at calculated interval
             if (wf_idx + 1) % update_interval == 0 or wf_idx == total_wf_rows - 1:
@@ -676,38 +730,55 @@ def process_matching_task(
 
     except SoftTimeLimitExceeded:
         # Soft time limit reached - save partial results
-        logger.warning(f"Job {job_id}: Soft time limit exceeded, saving partial results")
+        logger.warning(
+            f"Job {job_id}: Soft time limit exceeded, saving partial results"
+        )
         partial_results = True
 
-        try:
-            result_path = file_storage.get_result_file_path(UUID(job_id))
-            excel_writer.save_dataframe_to_excel(wf_df, result_path)
-            processing_time = time.time() - start_time
+        # Only save if services were initialized
+        if file_storage is not None and excel_writer is not None and wf_df is not None:
+            try:
+                result_path = file_storage.get_result_file_path(UUID(job_id))
+                excel_writer.save_dataframe_to_excel(wf_df, result_path)
+                processing_time = time.time() - start_time
 
-            return {
-                "status": "completed",
-                "job_id": job_id,
-                "matches_count": matches_count,
-                "processing_time": processing_time,
-                "result_file_id": job_id,
-                "matching_strategy_used": matching_strategy,
-                "report_format_used": report_format,
-                "partial_results": True,
-                "rows_processed": rows_processed,
-                "rows_matched": rows_matched,
-                "error": "Soft time limit exceeded - partial results saved",
-            }
-        except Exception as save_exc:
-            logger.error(f"Job {job_id}: Failed to save partial results: {save_exc}")
+                return {
+                    "status": "completed",
+                    "job_id": job_id,
+                    "matches_count": matches_count,
+                    "processing_time": processing_time,
+                    "result_file_id": job_id,
+                    "matching_strategy_used": matching_strategy,
+                    "report_format_used": report_format,
+                    "partial_results": True,
+                    "rows_processed": rows_processed,
+                    "rows_matched": rows_matched,
+                    "error": "Soft time limit exceeded - partial results saved",
+                }
+            except Exception as save_exc:
+                logger.error(
+                    f"Job {job_id}: Failed to save partial results: {save_exc}"
+                )
+                raise
+        else:
+            # Services not initialized, cannot save
+            logger.error(
+                f"Job {job_id}: Cannot save partial results - services not initialized"
+            )
             raise
 
     except Exception as exc:
         # Log error with memory usage
         log_with_memory("ERROR", f"Task failed: {str(exc)}")
 
-        # Try to save partial results
+        # Try to save partial results (only if services were initialized)
         try:
-            if rows_processed > 0 and "wf_df" in locals():
+            if (
+                rows_processed > 0
+                and wf_df is not None
+                and file_storage is not None
+                and excel_writer is not None
+            ):
                 logger.info(
                     f"Job {job_id}: Attempting to save partial results ({rows_processed} rows processed)"
                 )
@@ -719,9 +790,10 @@ def process_matching_task(
             logger.error(f"Job {job_id}: Failed to save partial results: {save_exc}")
             partial_results = False
 
-        # Update progress tracker with failure
+        # Update progress tracker with failure (only if tracker was initialized)
         try:
-            progress_tracker.fail_job(job_id, str(exc))
+            if progress_tracker is not None:
+                progress_tracker.fail_job(job_id, str(exc))
         except Exception:
             pass
 
@@ -731,13 +803,13 @@ def process_matching_task(
     finally:
         # Cleanup: clear large variables from memory
         try:
-            if "wf_df" in locals():
+            if wf_df is not None:
                 del wf_df
-            if "ref_df" in locals():
+            if ref_df is not None:
                 del ref_df
-            if "wf_descriptions" in locals():
+            if wf_descriptions is not None:
                 del wf_descriptions
-            if "ref_descriptions" in locals():
+            if ref_descriptions is not None:
                 del ref_descriptions
 
             log_with_memory("CLEANUP", "Memory cleanup completed")

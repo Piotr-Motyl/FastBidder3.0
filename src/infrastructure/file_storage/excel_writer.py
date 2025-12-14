@@ -726,6 +726,43 @@ class ExcelWriterService:
             adjusted_width = max(max_width + 2, 8)
             worksheet.column_dimensions[column_letter].width = adjusted_width
 
+    def save_dataframe_to_excel(self, dataframe, output_path: Path) -> Path:
+        """
+        Save DataFrame directly to Excel (helper for matching tasks).
+
+        Simplified method for matching_tasks.py that needs to save DataFrame.
+        Accepts both Pandas and Polars DataFrames.
+
+        Args:
+            dataframe: Pandas or Polars DataFrame to save
+            output_path: Path where to save Excel file
+
+        Returns:
+            Path to saved Excel file
+
+        Raises:
+            OSError: If file cannot be written
+
+        Note:
+            This is a minimal implementation for Vertical Slice E2E testing.
+            Does not include formatting, coloring, or report generation.
+        """
+        # Create parent directory if doesn't exist
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Convert to Pandas if needed (Polars has to_pandas() method)
+        if hasattr(dataframe, 'to_pandas'):
+            # Polars DataFrame
+            pandas_df = dataframe.to_pandas()
+        else:
+            # Already Pandas DataFrame
+            pandas_df = dataframe
+
+        # Save to Excel using openpyxl
+        pandas_df.to_excel(output_path, index=False, engine="openpyxl")
+
+        return output_path
+
     def _save_workbook(self, workbook: Workbook, output_path: Path) -> Path:
         """
         Save workbook to output path.

@@ -31,6 +31,11 @@ celery_app.conf.update(
     result_expires=3600,  # Results expire after 1 hour
 )
 
+# Autodiscover tasks from src.application.tasks module
+# This will automatically find and register all @celery_app.task decorated functions
+# in matching_tasks.py and other task modules
+celery_app.autodiscover_tasks(["src.application.tasks"])
+
 
 @celery_app.task(name="health_check")
 def health_check() -> dict:

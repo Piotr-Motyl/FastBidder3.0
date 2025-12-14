@@ -751,6 +751,45 @@ class FileStorageService:
     # Upload Endpoint Methods (Phase 2 - Task 2.4.1)
     # ========================================
 
+    def get_uploaded_file_path(self, file_id: UUID) -> Path:
+        """
+        Get path to uploaded file directory in upload storage (Phase 3 - Task 3.5.3).
+
+        Returns path to directory where uploaded file is stored.
+        Used by ProcessMatchingUseCase for file validation before job processing.
+
+        Process Flow:
+        1. Convert file_id UUID to string
+        2. Construct upload directory: {base_dir}/uploads/{file_id}/
+        3. Return Path object (does NOT check if directory exists)
+
+        Args:
+            file_id: UUID of uploaded file
+
+        Returns:
+            Path to upload directory for this file_id
+
+        Examples:
+            >>> service = FileStorageService()
+            >>> file_id = UUID("a3bb189e-8bf9-3888-9912-ace4e6543002")
+            >>> path = service.get_uploaded_file_path(file_id)
+            >>> print(path)
+            /tmp/fastbidder/uploads/a3bb189e-8bf9-3888-9912-ace4e6543002/
+
+        Architecture Note:
+            - Returns directory path, not full file path
+            - Caller must check .exists() or list directory contents
+            - For job storage files, use get_file_path(job_id, file_type) instead
+            - Upload storage is temporary before job processing starts
+
+        Phase 3 Implementation:
+            Straightforward path construction without validation.
+        """
+        # Construct upload directory path
+        upload_dir = self.base_dir / "uploads" / str(file_id)
+
+        return upload_dir
+
     async def save_uploaded_file(
         self, file_id: UUID, file_data: bytes, filename: str
     ) -> Path:

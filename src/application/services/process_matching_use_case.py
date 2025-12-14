@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field
 from src.application.commands.process_matching import ProcessMatchingCommand
 from src.application.models import JobStatus
 from src.application.ports.file_storage import FileStorageServiceProtocol
+from src.application.tasks.matching_tasks import process_matching_task
 
 if TYPE_CHECKING:
     from celery import Celery
@@ -409,18 +410,22 @@ class ProcessMatchingUseCase:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3 - Task 3.2.1.
         """
-        # Validate working file exists
+        # Validate working file exists in upload storage
         wf_file_id = UUID(command.working_file.file_id)
-        wf_exists = await self.file_storage.file_exists(wf_file_id, "working")
-        if not wf_exists:
+        wf_upload_dir = self.file_storage.get_uploaded_file_path(wf_file_id)
+
+        # Check if upload directory exists and contains files
+        if not wf_upload_dir.exists() or not any(wf_upload_dir.iterdir()):
             raise FileNotFoundError(
                 f"Working file not found in uploads storage: {command.working_file.file_id}"
             )
 
-        # Validate reference file exists
+        # Validate reference file exists in upload storage
         ref_file_id = UUID(command.reference_file.file_id)
-        ref_exists = await self.file_storage.file_exists(ref_file_id, "reference")
-        if not ref_exists:
+        ref_upload_dir = self.file_storage.get_uploaded_file_path(ref_file_id)
+
+        # Check if upload directory exists and contains files
+        if not ref_upload_dir.exists() or not any(ref_upload_dir.iterdir()):
             raise FileNotFoundError(
                 f"Reference file not found in uploads storage: {command.reference_file.file_id}"
             )
@@ -522,8 +527,16 @@ class ProcessMatchingUseCase:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3 - Task 3.2.1.
         """
-        # Get working file path from job storage
-        wf_path = self.file_storage.get_file_path(wf_file_id, "working")
+        # Get working file directory from upload storage
+        wf_upload_dir = self.file_storage.get_uploaded_file_path(wf_file_id)
+
+        # Find the uploaded file (should be only one .xlsx file in directory)
+        uploaded_files = list(wf_upload_dir.glob("*.xlsx"))
+        if not uploaded_files:
+            raise FileNotFoundError(
+                f"No .xlsx file found in upload directory: {wf_upload_dir}"
+            )
+        wf_path = uploaded_files[0]
 
         # Extract metadata (includes rows_count from first sheet)
         metadata = await self.file_storage.extract_file_metadata(wf_path)
