@@ -465,11 +465,7 @@ fastbidder/
 │   │   │   └── tracing.py            # OpenTelemetry
 │   │   └── __init__.py
 │   │
-│   └── shared/                       # 🔧 Cross-cutting concerns
-│       ├── config.py                 # ⏳ Configuration management (Phase 3)
-│       ├── constants.py              # ⏳ App constants (Phase 3)
-│       ├── exceptions.py             # ⏳ Global exceptions (Phase 3)
-│       ├── utils/                    # ⏳ Utilities (Phase 3+)
+│   └── shared/                       # 🔧 Cross-cutting concerns (Phase 4+)
 │       └── __init__.py
 │
 ├── docker/
