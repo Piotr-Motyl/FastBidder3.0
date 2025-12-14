@@ -139,13 +139,14 @@ def trigger_matching(
     # Build request according to API schema (ProcessMatchingRequest)
     # Working file: 20 descriptions in column A, rows 2-21 (header in row 1)
     # Reference file: 50 descriptions in column A, prices in column B, rows 2-51
+    # Output: A=Description, B=Cena, C=Match Score, D=Match Report
     payload = {
         "working_file": {
             "file_id": working_file_id,
             "description_column": "A",
             "description_range": {"start": 2, "end": 21},
             "price_target_column": "B",
-            "matching_report_column": "C",
+            "matching_report_column": "D",  # Changed from C to D (C is now Match Score)
         },
         "reference_file": {
             "file_id": reference_file_id,
@@ -213,27 +214,30 @@ def poll_job_status(
 
         data = response.json()
         status = data["status"]
-        progress = data.get("progress", {})
-        message = progress.get("message", "")
-        percentage = progress.get("percentage", 0)
+
+        # New API structure (JobStatusResponse)
+        # progress is int (0-100), not dict
+        percentage = data.get("progress", 0)
+        message = data.get("message", "")
+        current_step = data.get("current_step", "")
 
         # Log progress (only if message changed)
         if message != last_message:
             logger.info(
-                f"Job {job_id}: {status} - {percentage}% - {message}"
+                f"Job {job_id}: {status} - {percentage}% - {current_step} - {message}"
             )
             last_message = message
 
         # Check if completed
-        if status == "COMPLETED":
+        if status == "completed":
             logger.info(f"Job {job_id} completed successfully after {elapsed:.1f}s")
             return data
 
         # Check if failed
-        if status == "FAILED":
-            error_message = progress.get("error", "Unknown error")
+        if status == "failed":
+            error_details = data.get("error_details", "Unknown error")
             raise AssertionError(
-                f"Job {job_id} failed: {error_message}"
+                f"Job {job_id} failed: {error_details}"
             )
 
         # Wait before next poll
@@ -459,8 +463,8 @@ def test_full_workflow_happy_path(
         poll_interval=POLL_INTERVAL_SECONDS,
     )
 
-    assert final_status["status"] == "COMPLETED", (
-        f"Expected status COMPLETED, got {final_status['status']}"
+    assert final_status["status"] == "completed", (
+        f"Expected status completed, got {final_status['status']}"
     )
 
     # ========================================================================

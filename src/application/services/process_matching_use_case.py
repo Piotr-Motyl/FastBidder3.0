@@ -28,7 +28,7 @@ Phase 1 Note:
 
 import logging
 from typing import TYPE_CHECKING, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
@@ -36,6 +36,7 @@ from src.application.commands.process_matching import ProcessMatchingCommand
 from src.application.models import JobStatus
 from src.application.ports.file_storage import FileStorageServiceProtocol
 from src.application.tasks.matching_tasks import process_matching_task
+from src.infrastructure.persistence.redis.progress_tracker import RedisProgressTracker
 
 if TYPE_CHECKING:
     from celery import Celery
@@ -331,10 +332,28 @@ class ProcessMatchingUseCase:
             estimated_time = 30  # Default 30 seconds
         logger.info(f"Estimated processing time: {estimated_time}s")
 
-        # Steps 6-8: Trigger Celery task
+        # Steps 6-7: Generate job_id and initialize in Redis BEFORE Celery
+        # This ensures API can query status immediately without race condition
+        job_id = str(uuid4())
+        logger.info(f"Generated job_id: {job_id}")
+
+        # Initialize job status in Redis BEFORE sending to Celery queue
+        progress_tracker = RedisProgressTracker()
+        progress_tracker.start_job(
+            job_id=job_id,
+            message="Job queued, waiting for worker to start processing",
+            total_items=0,  # Unknown at this point, will be updated by worker
+        )
+        logger.info(f"Job {job_id} initialized in Redis with status QUEUED")
+
+        # Step 8: Trigger Celery task with custom task_id (same as job_id)
+        # Using apply_async() instead of delay() to specify custom task_id
         celery_data = command.to_celery_dict()
-        task_result = process_matching_task.delay(**celery_data)
-        logger.info(f"Celery task triggered: {task_result.id}")
+        task_result = process_matching_task.apply_async(
+            kwargs=celery_data,
+            task_id=job_id,  # Use our pre-generated job_id
+        )
+        logger.info(f"Celery task triggered with task_id: {task_result.id}")
 
         # Steps 9-10: Create and return result
         return ProcessMatchingResult(

@@ -476,10 +476,15 @@ def process_matching_task(
         timestamp = datetime.now().isoformat()
         logger.info(f"{timestamp} | {memory_mb:.1f}MB | {stage} | {message}")
 
-    # Helper function for progress updates
+    # Initialize RedisProgressTracker BEFORE try block
+    # This ensures it's available in update_progress() closure and except/finally blocks
+    progress_tracker = RedisProgressTracker()
+
+    # Helper function for progress updates (uses both Celery native + RedisProgressTracker)
     def update_progress(
         percentage: int, message: str, stage: str, current: int = 0, total: int = 0
     ):
+        # Update Celery native state (for Flower monitoring)
         self.update_state(
             state="PROCESSING",
             meta={
@@ -490,6 +495,24 @@ def process_matching_task(
                 "stage": stage,
             },
         )
+
+        # Update RedisProgressTracker (for our API /jobs/{job_id}/status)
+        try:
+            progress_tracker.update_progress(
+                job_id=job_id,
+                progress=percentage,
+                message=message,
+                current_item=current,
+                total_items=total,
+                stage=stage,
+                eta_seconds=0,  # TODO: calculate ETA based on processing rate
+                memory_mb=process.memory_info().rss / 1024 / 1024,
+                errors=None,
+            )
+        except Exception as e:
+            # Log error but don't fail task if progress tracking fails
+            logger.warning(f"Failed to update progress in Redis: {e}")
+
         log_with_memory(
             stage, f"{message} ({current}/{total})" if total > 0 else message
         )
@@ -498,7 +521,6 @@ def process_matching_task(
     file_storage = None
     excel_writer = None
     excel_reader = None
-    progress_tracker = None
     wf_df = None
     ref_df = None
     wf_descriptions = None
@@ -510,6 +532,15 @@ def process_matching_task(
     start_time = time.time()
 
     try:
+        # ===== STAGE 0: Initialize job in Redis =====
+        # Start job tracking in Redis so API can query status immediately
+        progress_tracker.start_job(
+            job_id=job_id,
+            message="Job started - initializing services",
+            total_items=0,  # Will be updated after loading files
+        )
+        logger.info(f"Job {job_id} started in Redis progress tracker")
+
         # ===== STAGE 1: START (0%) =====
         update_progress(0, "Task started", "START")
 
@@ -522,9 +553,6 @@ def process_matching_task(
         # Create matching config and engine
         config = MatchingConfig.default()
         matching_engine = SimpleMatchingEngine(parameter_extractor, config)
-
-        # Initialize progress tracker
-        progress_tracker = RedisProgressTracker()
 
         # Convert strategy and format strings to Enums
         strategy = MatchingStrategy(matching_strategy)
@@ -602,6 +630,42 @@ def process_matching_task(
             50, "Extracting HVAC parameters (DN, PN, etc.)", "PARAMETERS_EXTRACTED"
         )
 
+        # Initialize output columns in DataFrame (before matching loop)
+        # This ensures columns exist even if no matches are found
+        target_col_idx = ProcessMatchingCommand.column_to_index(
+            working_file["price_target_column"]
+        )
+        # Ensure DataFrame has enough columns
+        while len(wf_df.columns) <= target_col_idx:
+            wf_df[f"Column_{len(wf_df.columns)}"] = ""
+
+        # Set column name for price target (column B)
+        wf_df.columns.values[target_col_idx] = "Cena"
+
+        # Add Match Score column (column C - after price)
+        score_col_idx = target_col_idx + 1
+        while len(wf_df.columns) <= score_col_idx:
+            wf_df[f"Column_{len(wf_df.columns)}"] = ""
+        wf_df.columns.values[score_col_idx] = "Match Score"
+
+        # Add matching report column if specified (column D - after score)
+        if working_file.get("matching_report_column"):
+            report_col_idx = ProcessMatchingCommand.column_to_index(
+                working_file["matching_report_column"]
+            )
+            # Ensure DataFrame has enough columns
+            while len(wf_df.columns) <= report_col_idx:
+                wf_df[f"Column_{len(wf_df.columns)}"] = ""
+
+            # Set column name for match report
+            wf_df.columns.values[report_col_idx] = "Match Report"
+
+        logger.info(
+            f"Initialized output columns: Cena (col {target_col_idx}), "
+            f"Match Score (col {score_col_idx}), "
+            f"Match Report (col {report_col_idx if working_file.get('matching_report_column') else 'N/A'})"
+        )
+
         # Create HVACDescription entities and extract parameters
         wf_descriptions = []
         for idx, text in enumerate(wf_raw_texts):
@@ -663,6 +727,10 @@ def process_matching_task(
                         else ""
                     )
                     wf_df.iloc[target_row, target_col_idx] = price_value
+
+                    # Write match score to Match Score column (column C)
+                    score_col_idx = target_col_idx + 1
+                    wf_df.iloc[target_row, score_col_idx] = match_result.score.final_score
 
                     # Write match report if column specified
                     if working_file.get("matching_report_column"):
