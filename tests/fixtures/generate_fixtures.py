@@ -243,6 +243,63 @@ def generate_performance_reference_file():
     return df
 
 
+def generate_polish_chars_working_file():
+    """
+    Generate working file with Polish characters for E2E testing.
+
+    Contains 3 descriptions with Polish diacritics: ą, ć, ę, ł, ń, ó, ś, ź, ż
+    Tests encoding preservation through entire stack.
+
+    Returns:
+        pd.DataFrame with Polish character descriptions
+    """
+    descriptions = [
+        "Zawór kulowy DN50 PN16 mosiądz",  # ą
+        "Zawór zwrotny DN80 PN10 żeliwo szare",  # ż
+        "Kompensator długości DN100 stal nierdzewna",  # ł, ó
+    ]
+
+    df = pd.DataFrame({"Description": descriptions})
+    return df
+
+
+def generate_polish_chars_reference_file():
+    """
+    Generate reference file matching Polish character working file.
+
+    Contains matching items with prices for Polish character test.
+
+    Returns:
+        pd.DataFrame with matching items
+    """
+    reference_data = [
+        {"Description": "Zawór kulowy DN50 PN16 mosiądz", "Price": 250.00},
+        {"Description": "Zawór zwrotny DN80 PN10 żeliwo", "Price": 180.00},
+        {"Description": "Kompensator DN100 nierdzewny", "Price": 450.00},
+    ]
+
+    df = pd.DataFrame(reference_data)
+    return df
+
+
+def generate_single_item_working_file():
+    """
+    Generate working file with single item for boundary testing.
+
+    Contains only 1 description to test minimum viable input.
+    Tests off-by-one errors and edge case handling.
+
+    Returns:
+        pd.DataFrame with single description
+    """
+    descriptions = [
+        "Zawór kulowy DN50 PN16 mosiądz",
+    ]
+
+    df = pd.DataFrame({"Description": descriptions})
+    return df
+
+
 def main():
     """
     Main function to generate Excel fixtures.
@@ -252,6 +309,9 @@ def main():
         - tests/fixtures/sample_reference_file.xlsx (50 rows)
         - tests/fixtures/performance_working_file.xlsx (100 rows, optional)
         - tests/fixtures/performance_reference_file.xlsx (200 rows, optional)
+        - tests/fixtures/polish_chars_working.xlsx (3 rows, with --data-variations)
+        - tests/fixtures/polish_chars_reference.xlsx (3 rows, with --data-variations)
+        - tests/fixtures/single_item_working.xlsx (1 row, with --data-variations)
     """
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Generate sample Excel fixtures for testing")
@@ -259,6 +319,11 @@ def main():
         "--performance",
         action="store_true",
         help="Generate performance test fixtures (100/200 items)",
+    )
+    parser.add_argument(
+        "--data-variations",
+        action="store_true",
+        help="Generate data variation fixtures (Polish chars, single item)",
     )
     args = parser.parse_args()
 
@@ -304,6 +369,36 @@ def main():
         print(f"  Rows: {len(perf_reference_df)}")
         print(f"  Columns: {list(perf_reference_df.columns)}")
 
+    # Generate data variation fixtures if requested
+    if args.data_variations:
+        print("\n" + "=" * 60)
+        print("GENERATING DATA VARIATION FIXTURES")
+        print("=" * 60)
+
+        print("\nGenerating polish_chars_working.xlsx...")
+        polish_working_df = generate_polish_chars_working_file()
+        polish_working_path = fixtures_dir / "polish_chars_working.xlsx"
+        polish_working_df.to_excel(polish_working_path, index=False, engine="openpyxl")
+        print(f"[OK] Created {polish_working_path}")
+        print(f"  Rows: {len(polish_working_df)}")
+        print(f"  Columns: {list(polish_working_df.columns)}")
+
+        print("\nGenerating polish_chars_reference.xlsx...")
+        polish_reference_df = generate_polish_chars_reference_file()
+        polish_reference_path = fixtures_dir / "polish_chars_reference.xlsx"
+        polish_reference_df.to_excel(polish_reference_path, index=False, engine="openpyxl")
+        print(f"[OK] Created {polish_reference_path}")
+        print(f"  Rows: {len(polish_reference_df)}")
+        print(f"  Columns: {list(polish_reference_df.columns)}")
+
+        print("\nGenerating single_item_working.xlsx...")
+        single_item_df = generate_single_item_working_file()
+        single_item_path = fixtures_dir / "single_item_working.xlsx"
+        single_item_df.to_excel(single_item_path, index=False, engine="openpyxl")
+        print(f"[OK] Created {single_item_path}")
+        print(f"  Rows: {len(single_item_df)}")
+        print(f"  Columns: {list(single_item_df.columns)}")
+
     # Preview
     print("\n" + "=" * 60)
     print("WORKING FILE PREVIEW (first 5 rows):")
@@ -322,6 +417,10 @@ def main():
     if args.performance:
         print(f"  - {perf_working_path}")
         print(f"  - {perf_reference_path}")
+    if args.data_variations:
+        print(f"  - {polish_working_path}")
+        print(f"  - {polish_reference_path}")
+        print(f"  - {single_item_path}")
 
 
 if __name__ == "__main__":
