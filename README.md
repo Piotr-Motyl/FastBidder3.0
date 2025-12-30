@@ -860,35 +860,41 @@ docker logs fastbidder_flower -f
 
 ## 🧪 Testing
 
-**Status:** Tests will be implemented in **Phase 6: Testing & Documentation**.
-
-### Planned Test Structure
-
-```
-tests/
-├── unit/               # Unit tests for each layer
-│   ├── test_domain/    # Entities, Value Objects, Services
-│   ├── test_application/  # Use Cases, Commands, Queries
-│   └── test_infrastructure/  # Repository implementations
-├── integration/        # Integration tests
-│   ├── test_redis/     # Redis persistence
-│   ├── test_celery/    # Celery task execution
-│   └── test_excel/     # Excel parsing/writing
-└── e2e/               # End-to-end workflow tests
-    └── test_matching_workflow.py
-```
-
-### Run Tests (Phase 6)
+### Running Tests
 
 ```bash
-# Local environment
-make test
+# Fast: Unit tests only (no Docker needed)
+make test-unit
 
-# Docker environment
-make docker-test
+# Integration tests (requires Docker)
+make docker-up           # Start Redis + ChromaDB
+make test-integration
 
-# Coverage report
-make test-coverage
+# E2E tests (requires Docker + Celery worker)
+make docker-up           # Start Redis
+make celery-worker       # Start Celery worker (in separate terminal)
+make test-e2e
+
+# All tests
+make test-all
+
+# CI/CD mode (strict, coverage threshold)
+make test-ci
+```
+
+### Test Dependencies
+
+| Test Type       | Docker Required? | Redis/Celery? | Purpose                          |
+|-----------------|------------------|---------------|----------------------------------|
+| Unit tests      | ❌ No            | ❌ No         | Pure logic, fast execution       |
+| Integration     | ✅ Yes           | ✅ Yes        | Real ChromaDB, Redis, embeddings |
+| E2E tests       | ✅ Yes           | ✅ Yes        | Full workflow with Celery        |
+
+### Evaluation
+
+```bash
+# Run matching quality evaluation with golden dataset
+make evaluate
 ```
 
 ---

@@ -151,7 +151,7 @@ def docker_services():
 
 
 @pytest.fixture(scope="session")
-def test_client() -> Generator[TestClient, None, None]:
+def test_client() -> TestClient:
     """
     Provide FastAPI TestClient for API testing.
 
@@ -160,7 +160,7 @@ def test_client() -> Generator[TestClient, None, None]:
 
     Scope: session (shared across all tests)
 
-    Yields:
+    Returns:
         TestClient: FastAPI test client
 
     Examples:
@@ -177,10 +177,8 @@ def test_client() -> Generator[TestClient, None, None]:
         - Dependency injection (can be overridden)
     """
     app = create_app()
-    with TestClient(app) as client:
-        logger.info("FastAPI TestClient created")
-        yield client
-    logger.info("FastAPI TestClient closed")
+    logger.info("FastAPI TestClient created")
+    return TestClient(app)
 
 
 # ============================================================================
