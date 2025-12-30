@@ -35,9 +35,10 @@ class MatchResult(BaseModel):
     - Human-readable justification
 
     Attributes:
-        matched_item_id: UUID of the matched reference description
-            - Reference to HVACDescription entity in the reference catalog
-            - Used to retrieve full details (price, supplier, etc.)
+        matched_reference_id: ID of the matched reference description (UUID or ChromaDB ID string)
+            - UUID: Domain entity ID for HVACDescription (when not from ChromaDB)
+            - str: ChromaDB document ID format "{file_id}_{row_number}" (when from vector DB)
+            - Used to retrieve full details (price, supplier, etc.) and for evaluation
 
         score: MatchScore value object with detailed scoring
             - parameter_score: 0-100 from exact parameter matching
@@ -100,8 +101,8 @@ class MatchResult(BaseModel):
         - breakdown is flexible dict (for future expansion)
     """
 
-    matched_reference_id: UUID = Field(
-        description="UUID of matched item from reference catalog"
+    matched_reference_id: UUID | str = Field(
+        description="ID of matched reference: UUID (domain entity) or str (ChromaDB format '{file_id}_{row_number}')"
     )
 
     score: MatchScore = Field(

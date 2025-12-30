@@ -255,11 +255,6 @@ async def test_evaluation_runner_with_real_hybrid_engine(
 
 
 @pytest.mark.integration
-@pytest.mark.skip(
-    reason="ID format mismatch: MatchResult returns HVACDescription.id (UUID) "
-    "but golden dataset expects ChromaDB ID ({file_id}_{row_number}). "
-    "This is an architectural issue to be resolved in future work."
-)
 async def test_evaluation_runner_all_matches_found(
     reference_indexer,
     evaluation_runner,

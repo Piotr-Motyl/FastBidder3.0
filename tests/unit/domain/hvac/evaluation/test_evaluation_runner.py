@@ -229,15 +229,15 @@ async def test_evaluation_runner_happy_path(
         # Return correct ID in position 1
         if "DN50" in query_text:
             result = Mock()
-            result.reference_id = "id_1"
+            result.description_id = "id_1"
             return [result]
         elif "DN100" in query_text:
             result = Mock()
-            result.reference_id = "id_2"
+            result.description_id = "id_2"
             return [result]
         elif "DN80" in query_text:
             result = Mock()
-            result.reference_id = "id_3"
+            result.description_id = "id_3"
             return [result]
         return []
 
@@ -302,19 +302,19 @@ async def test_evaluation_runner_partial_matches(
         if "DN50" in query_text:
             # Correct ID at rank 1
             r1 = Mock()
-            r1.reference_id = "id_1"
+            r1.description_id = "id_1"
             results = [r1]
         elif "DN100" in query_text:
             # Correct ID at rank 2
             r1 = Mock()
-            r1.reference_id = "id_wrong"
+            r1.description_id = "id_wrong"
             r2 = Mock()
-            r2.reference_id = "id_2"
+            r2.description_id = "id_2"
             results = [r1, r2]
         elif "DN80" in query_text:
             # Correct ID not found
             r1 = Mock()
-            r1.reference_id = "id_wrong"
+            r1.description_id = "id_wrong"
             results = [r1]
 
         return results[:top_k]
@@ -365,26 +365,26 @@ async def test_evaluation_runner_mrr_calculation(
         if "DN50" in query_text:
             # Rank 1
             r1 = Mock()
-            r1.reference_id = "id_1"
+            r1.description_id = "id_1"
             results = [r1]
         elif "DN100" in query_text:
             # Rank 3
             r1 = Mock()
-            r1.reference_id = "id_x"
+            r1.description_id = "id_x"
             r2 = Mock()
-            r2.reference_id = "id_y"
+            r2.description_id = "id_y"
             r3 = Mock()
-            r3.reference_id = "id_2"
+            r3.description_id = "id_2"
             results = [r1, r2, r3]
         elif "DN80" in query_text:
             # Rank 5
             results = []
             for i in range(4):
                 r = Mock()
-                r.reference_id = f"id_wrong_{i}"
+                r.description_id = f"id_wrong_{i}"
                 results.append(r)
             r5 = Mock()
-            r5.reference_id = "id_3"
+            r5.description_id = "id_3"
             results.append(r5)
 
         return results[:top_k]
@@ -416,15 +416,15 @@ async def test_evaluation_runner_metrics_by_difficulty(
     def mock_search(query_text, top_k, filters=None):
         if "DN50" in query_text:  # easy
             r = Mock()
-            r.reference_id = "id_1"
+            r.description_id = "id_1"
             return [r]
         elif "DN100" in query_text:  # medium
             r = Mock()
-            r.reference_id = "id_2"
+            r.description_id = "id_2"
             return [r]
         elif "DN80" in query_text:  # hard
             r = Mock()
-            r.reference_id = "id_wrong"
+            r.description_id = "id_wrong"
             return [r]
         return []
 

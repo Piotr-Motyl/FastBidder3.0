@@ -339,7 +339,7 @@ class SimpleMatchingEngine:
         )
 
         return MatchResult(
-            matched_reference_id=best_ref.id,
+            matched_reference_id=best_ref.chromadb_id or best_ref.id,  # Prefer ChromaDB ID for evaluation
             score=match_score,
             confidence=confidence,
             message=message,

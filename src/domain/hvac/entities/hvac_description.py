@@ -62,12 +62,13 @@ class HVACDescription:
     CREATED -> PARAMETERS_EXTRACTED -> MATCHED -> PRICED
 
     Attributes:
-        id: Unique identifier (UUID4, auto-generated)
+        id: Unique identifier (UUID4, auto-generated, domain entity ID)
         raw_text: Original description text from Excel (min 3 characters)
         extracted_params: Dictionary of extracted technical parameters
         match_score: Hybrid matching score (None if not matched yet)
         source_row_number: Excel row number for tracking (optional)
         file_id: Source file identifier (optional)
+        chromadb_id: ChromaDB document ID format "{file_id}_{row_number}" (optional, for references)
         matched_price: Price from matched reference description (optional)
         state: Current processing state
         created_at: Entity creation timestamp
@@ -93,6 +94,7 @@ class HVACDescription:
     # Optional tracking fields
     source_row_number: int | None = None
     file_id: UUID | None = None
+    chromadb_id: str | None = None  # ChromaDB document ID: "{file_id}_{row_number}"
 
     # Processing results (populated during pipeline)
     extracted_params: Optional[ExtractedParameters] = None
@@ -481,6 +483,7 @@ class HVACDescription:
             "match_score": self.match_score.to_dict() if self.match_score else None,
             "source_row_number": self.source_row_number,
             "file_id": str(self.file_id) if self.file_id else None,
+            "chromadb_id": self.chromadb_id,
             "matched_price": str(self.matched_price) if self.matched_price else None,
             "matched_description": self.matched_description,
             "state": self.state.value,
@@ -582,6 +585,7 @@ class HVACDescription:
         instance.match_score = match_score
         instance.source_row_number = data.get("source_row_number")
         instance.file_id = file_id
+        instance.chromadb_id = data.get("chromadb_id")
         instance.matched_price = matched_price
         instance.matched_description = data.get("matched_description")
         instance.state = state

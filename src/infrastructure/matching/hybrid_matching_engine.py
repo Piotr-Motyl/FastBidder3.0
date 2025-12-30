@@ -421,6 +421,7 @@ class HybridMatchingEngine:
                 raw_text=candidate.reference_text,
                 source_row_number=candidate.source_row_number,
                 file_id=candidate.file_id,
+                chromadb_id=candidate.description_id,  # Preserve ChromaDB ID for evaluation
             )
             descriptions.append(desc)
 

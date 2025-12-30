@@ -302,8 +302,8 @@ class EvaluationRunner:
                     filters=None,
                 )
 
-                # Extract IDs from candidates
-                candidate_ids = [getattr(c, "reference_id", None) for c in top_k_candidates]
+                # Extract IDs from candidates (ChromaDB format: {file_id}_{row_number})
+                candidate_ids = [c.description_id for c in top_k_candidates]
 
                 # Find rank of correct reference
                 correct_rank = None

@@ -149,12 +149,6 @@ def threshold_tuner(evaluation_runner):
 
 @pytest.mark.integration
 @pytest.mark.slow  # This test loads ML model, takes ~5-10 seconds
-@pytest.mark.skip(
-    reason="ID format mismatch: MatchResult returns HVACDescription.id (UUID) "
-    "but golden dataset expects ChromaDB ID ({file_id}_{row_number}). "
-    "This causes all pairs to fail matching, resulting in 0% recall. "
-    "Same architectural issue as test_evaluation_runner_all_matches_found."
-)
 async def test_threshold_tuner_happy_path(
     reference_indexer,
     threshold_tuner,
@@ -274,12 +268,6 @@ async def test_threshold_tuner_happy_path(
 
 
 @pytest.mark.integration
-@pytest.mark.skip(
-    reason="ID format mismatch: MatchResult returns HVACDescription.id (UUID) "
-    "but golden dataset expects ChromaDB ID ({file_id}_{row_number}). "
-    "This causes all pairs to fail matching, resulting in 0% recall. "
-    "Same architectural issue as test_evaluation_runner_all_matches_found."
-)
 async def test_threshold_tuner_finds_optimal_threshold(
     reference_indexer,
     threshold_tuner,
