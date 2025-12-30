@@ -617,15 +617,18 @@ class RedisProgressTracker:
 
     def get_status(self, job_id: str) -> Optional[dict]:
         """
-        Retrieve current job status from Redis.
+        Retrieve current job status from Redis (Phase 4: includes AI matching info).
 
         Returns full progress data with extended metadata.
+        If job is completed, also includes result data (using_ai, ai_model).
 
         Args:
             job_id: Unique job identifier
 
         Returns:
             Progress dict if found, None if job not found or expired
+            Dict includes: status, progress, message, stage, eta_seconds, memory_mb,
+            errors, last_heartbeat, and (if completed): using_ai, ai_model
 
         Error Handling:
             - On RedisError: Try to read from fallback file
@@ -638,6 +641,9 @@ class RedisProgressTracker:
             ...     print(f"Stage: {status['stage']}")
             ...     print(f"ETA: {status['eta_seconds']}s")
             ...     print(f"Memory: {status['memory_mb']}MB")
+            ...     # Phase 4: AI matching info
+            ...     print(f"Using AI: {status.get('using_ai', False)}")
+            ...     print(f"AI Model: {status.get('ai_model')}")
         """
         try:
             # Get progress data from Redis
@@ -645,7 +651,29 @@ class RedisProgressTracker:
             if not data:
                 return None
 
-            return json.loads(data)
+            progress_data = json.loads(data)
+
+            # Phase 4: If job is completed, merge result data (includes using_ai, ai_model)
+            if progress_data.get("status") == "completed":
+                result_data = self.redis.get(self._get_result_key(job_id))
+                if result_data:
+                    try:
+                        result = json.loads(result_data)
+                        # Check if result was compressed
+                        if isinstance(result, dict) and result.get("compressed"):
+                            # Decompress
+                            import gzip
+                            decompressed = gzip.decompress(bytes.fromhex(result["data"]))
+                            result = json.loads(decompressed.decode())
+
+                        # Merge AI matching fields from result into progress_data
+                        if isinstance(result, dict):
+                            progress_data["using_ai"] = result.get("using_ai", False)
+                            progress_data["ai_model"] = result.get("ai_model")
+                    except Exception as e:
+                        logger.warning(f"Failed to parse result data for {job_id}: {e}")
+
+            return progress_data
 
         except RedisError as e:
             logger.warning(f"Redis error in get_status for {job_id}: {e}")

@@ -58,6 +58,8 @@ class JobStatusResult(BaseModel):
         error_details: Error information if failed (optional)
         created_at: When job was created (optional)
         updated_at: Last status update time (optional)
+        using_ai: True if AI matching (HybridMatchingEngine) was used - Phase 4
+        ai_model: AI model name if AI enabled - Phase 4
     """
 
     job_id: UUID
@@ -69,6 +71,9 @@ class JobStatusResult(BaseModel):
     error_details: Optional[str] = None
     created_at: Optional[str] = None  # ISO datetime string
     updated_at: Optional[str] = None  # ISO datetime string
+    # Phase 4: AI Matching information
+    using_ai: bool = False
+    ai_model: Optional[str] = None
 
 
 class GetJobStatusQueryHandler:
@@ -289,7 +294,7 @@ class GetJobStatusQueryHandler:
         if progress_data.get("errors"):
             error_details = "\n".join(progress_data["errors"])
 
-        # Step 8: Create and return result
+        # Step 8: Create and return result (Phase 4: includes AI matching info)
         result = JobStatusResult(
             job_id=query.job_id,
             status=status_enum.value,  # Convert enum to string for Pydantic
@@ -300,6 +305,9 @@ class GetJobStatusQueryHandler:
             error_details=error_details,
             created_at=None,  # Phase 2: Not tracked yet
             updated_at=progress_data.get("last_heartbeat"),
+            # Phase 4: AI Matching information (from result data if completed)
+            using_ai=progress_data.get("using_ai", False),
+            ai_model=progress_data.get("ai_model"),
         )
 
         logger.info(

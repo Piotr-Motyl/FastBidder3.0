@@ -116,7 +116,7 @@ def process_matching_task(
             - "debug": Full debug info (all scores, parameters, confidence)
 
     Returns:
-        dict: Task result with detailed metrics:
+        dict: Task result with detailed metrics (Phase 4: includes AI matching info):
             {
                 "status": str,  # "completed" or "failed"
                 "job_id": str,  # Celery task ID
@@ -128,6 +128,8 @@ def process_matching_task(
                 "partial_results": bool,  # True if task failed but partial results saved
                 "rows_processed": int,  # Total rows processed
                 "rows_matched": int,  # Rows that found a match
+                "using_ai": bool,  # Phase 4: True if AI matching (HybridMatchingEngine) was used
+                "ai_model": str | None,  # Phase 4: AI model name if AI enabled, None otherwise
                 "error": str  # Error message if status="failed" (optional)
             }
 
@@ -549,9 +551,72 @@ def process_matching_task(
         file_storage = FileStorageService()
         parameter_extractor = ConcreteParameterExtractor()
 
-        # Create matching config and engine
+        # Create matching config
         config = MatchingConfig.default()
-        matching_engine = SimpleMatchingEngine(parameter_extractor, config)
+
+        # ===== AI MATCHING SETUP (Phase 4) =====
+        # Check if AI matching is enabled via environment variable
+        use_ai_matching = os.getenv("USE_AI_MATCHING", "false").lower() == "true"
+        using_ai = False
+        ai_model = None
+
+        if use_ai_matching:
+            try:
+                # Try to initialize HybridMatchingEngine with AI components
+                logger.info("USE_AI_MATCHING=true detected - initializing AI matching pipeline")
+
+                from src.infrastructure.ai.embeddings.embedding_service import (
+                    EmbeddingService,
+                )
+                from src.infrastructure.ai.vector_store.chroma_client import (
+                    ChromaClientSingleton,
+                )
+                from src.infrastructure.ai.retrieval.semantic_retriever import (
+                    SemanticRetriever,
+                )
+                from src.infrastructure.matching.hybrid_matching_engine import (
+                    HybridMatchingEngine,
+                )
+
+                # Initialize AI services for two-stage pipeline
+                embedding_service = EmbeddingService()
+                chroma_client = ChromaClientSingleton.get_instance()
+                semantic_retriever = SemanticRetriever(embedding_service, chroma_client)
+
+                # Create SimpleMatchingEngine with AI embeddings for Stage 2
+                simple_engine = SimpleMatchingEngine(
+                    parameter_extractor, config, embedding_service
+                )
+
+                # Create HybridMatchingEngine (two-stage pipeline: retrieval + scoring)
+                matching_engine = HybridMatchingEngine(
+                    semantic_retriever=semantic_retriever,
+                    simple_matching_engine=simple_engine,
+                    config=config,
+                )
+
+                using_ai = True
+                ai_model = "paraphrase-multilingual-MiniLM-L12-v2"  # From EmbeddingService
+                logger.info(
+                    "AI matching enabled: Using HybridMatchingEngine (Stage 1: Retrieval, Stage 2: Scoring)"
+                )
+
+            except Exception as e:
+                # Fallback to SimpleMatchingEngine if AI initialization fails
+                logger.warning(
+                    f"Failed to initialize AI matching, falling back to SimpleMatchingEngine: {e}"
+                )
+                matching_engine = SimpleMatchingEngine(parameter_extractor, config)
+                using_ai = False
+                ai_model = None
+        else:
+            # AI matching disabled - use SimpleMatchingEngine with placeholder semantic scores
+            logger.info(
+                "AI matching disabled (USE_AI_MATCHING=false): Using SimpleMatchingEngine with placeholder semantic scores"
+            )
+            matching_engine = SimpleMatchingEngine(parameter_extractor, config)
+            using_ai = False
+            ai_model = None
 
         # Convert strategy and format strings to Enums
         strategy = MatchingStrategy(matching_strategy)
@@ -692,11 +757,25 @@ def process_matching_task(
         matches_count = 0
         rows_processed = 0
 
+        # Import asyncio for HybridMatchingEngine async calls
+        import asyncio
+
         for wf_idx, wf_desc in enumerate(wf_descriptions):
-            # Find match using matching engine
-            match_result = matching_engine.match_single(
-                wf_desc, ref_descriptions, matching_threshold
-            )
+            # Find match using matching engine (handle both sync and async engines)
+            if using_ai:
+                # HybridMatchingEngine: async interface, reference_descriptions not used (uses vector DB)
+                match_result = asyncio.run(
+                    matching_engine.match(
+                        working_description=wf_desc,
+                        reference_descriptions=[],  # Not used in hybrid mode
+                        threshold=matching_threshold,
+                    )
+                )
+            else:
+                # SimpleMatchingEngine: sync interface
+                match_result = matching_engine.match_single(
+                    wf_desc, ref_descriptions, matching_threshold
+                )
 
             rows_processed += 1
 
@@ -784,7 +863,7 @@ def process_matching_task(
             },
         )
 
-        # Return success result with metrics
+        # Return success result with metrics (Phase 4: includes AI matching info)
         return {
             "status": "completed",
             "job_id": job_id,
@@ -796,6 +875,8 @@ def process_matching_task(
             "partial_results": False,
             "rows_processed": rows_processed,
             "rows_matched": rows_matched,
+            "using_ai": using_ai,  # Phase 4: AI matching enabled
+            "ai_model": ai_model,  # Phase 4: AI model name if AI enabled
         }
 
     except SoftTimeLimitExceeded:
@@ -824,6 +905,8 @@ def process_matching_task(
                     "rows_processed": rows_processed,
                     "rows_matched": rows_matched,
                     "error": "Soft time limit exceeded - partial results saved",
+                    "using_ai": using_ai,  # Phase 4: AI matching info
+                    "ai_model": ai_model,  # Phase 4: AI model name
                 }
             except Exception as save_exc:
                 logger.error(

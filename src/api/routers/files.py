@@ -28,9 +28,9 @@ Phase 2 Note:
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Literal
 
-from fastapi import APIRouter, status, HTTPException, Depends, UploadFile, File
+from fastapi import APIRouter, status, HTTPException, Depends, UploadFile, File, Query
 from pydantic import BaseModel, Field
 
 # Import Application Layer use case
@@ -110,6 +110,22 @@ class UploadFileResponse(BaseModel):
         description="Human-readable success message",
     )
 
+    # Phase 4: AI Matching fields for vector DB indexing
+    file_type: Literal["working", "reference"] = Field(
+        default="working",
+        description="File type for AI indexing (working or reference)",
+    )
+
+    indexing_status: Optional[str] = Field(
+        default=None,
+        description="ChromaDB indexing status (pending/completed/failed) - Phase 4",
+    )
+
+    indexed_count: Optional[int] = Field(
+        default=None,
+        description="Number of items indexed in vector DB - Phase 4",
+    )
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -138,6 +154,9 @@ class UploadFileResponse(BaseModel):
                     },
                 ],
                 "message": "File uploaded successfully. Use file_id in matching requests.",
+                "file_type": "reference",
+                "indexing_status": "completed",
+                "indexed_count": 150,
             }
         }
 
@@ -235,6 +254,10 @@ async def upload_file(
     file: UploadFile = File(
         ...,
         description="Excel file to upload (.xlsx or .xls, max 10MB)",
+    ),
+    file_type: Literal["working", "reference"] = Query(
+        default="working",
+        description="File type for AI indexing: 'working' (to be matched) or 'reference' (catalog for matching against)",
     ),
     use_case=Depends(get_file_upload_use_case),
 ) -> UploadFileResponse:
@@ -396,7 +419,7 @@ async def upload_file(
         # Execute use case
         result = await use_case.execute(file_data=file_data, filename=file.filename)
 
-        # Convert to response
+        # Convert to response (Phase 4: include file_type for AI indexing)
         return UploadFileResponse(
             file_id=result.file_id,
             filename=result.filename,
@@ -407,6 +430,9 @@ async def upload_file(
             upload_time=result.upload_time,
             preview=result.preview,
             message="File uploaded successfully. Use file_id in matching requests.",
+            file_type=file_type,  # Phase 4: AI indexing support
+            indexing_status=None,  # Phase 4: Will be updated by async indexing task
+            indexed_count=None,  # Phase 4: Will be populated after indexing completes
         )
 
     except ValueError as e:

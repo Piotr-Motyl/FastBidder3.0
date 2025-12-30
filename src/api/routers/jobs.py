@@ -102,6 +102,17 @@ class JobStatusResponse(BaseModel):
         default=None, description="ISO 8601 timestamp of last status update"
     )
 
+    # Phase 4: AI Matching information
+    using_ai: bool = Field(
+        default=False,
+        description="True if AI matching (HybridMatchingEngine) was used - Phase 4",
+    )
+
+    ai_model: Optional[str] = Field(
+        default=None,
+        description="AI model name if AI enabled (e.g., 'paraphrase-multilingual-MiniLM-L12-v2') - Phase 4",
+    )
+
     class Config:
         """Pydantic configuration."""
 
@@ -116,6 +127,8 @@ class JobStatusResponse(BaseModel):
                 "error_details": None,
                 "created_at": "2025-10-11T10:30:00Z",
                 "updated_at": "2025-10-11T10:30:45Z",
+                "using_ai": True,
+                "ai_model": "paraphrase-multilingual-MiniLM-L12-v2",
             }
         }
 
@@ -474,7 +487,7 @@ async def get_job_status(
         result = await handler.handle(query)
         logger.info(f"Job {job_id} status retrieved: {result.status} ({result.progress}%)")
 
-        # Step 6: Convert Application Layer DTO to API Layer Response
+        # Step 6: Convert Application Layer DTO to API Layer Response (Phase 4: includes AI fields)
         response = JobStatusResponse(
             job_id=result.job_id,
             status=JobStatus(result.status),  # Convert string to JobStatus enum
@@ -485,6 +498,9 @@ async def get_job_status(
             error_details=result.error_details,
             created_at=result.created_at,
             updated_at=result.updated_at,
+            # Phase 4: AI Matching information
+            using_ai=result.using_ai,
+            ai_model=result.ai_model,
         )
 
         # Step 7: Cache-Control header (Phase 3 - set via Response object)

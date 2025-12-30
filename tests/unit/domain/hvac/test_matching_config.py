@@ -263,3 +263,34 @@ def test_for_testing_validation_still_enforced():
             hybrid_param_weight=0.5,
             hybrid_semantic_weight=0.3,  # Invalid sum
         )
+
+
+# ============================================================================
+# TESTS - retrieval_top_k Validation (CRITICAL-3 fix)
+# ============================================================================
+
+
+def test_retrieval_top_k_validation_min():
+    """Test MatchingConfig raises ValueError when retrieval_top_k < 1."""
+    with pytest.raises(ValueError, match="retrieval_top_k must be at least 1"):
+        MatchingConfig(retrieval_top_k=0)
+
+
+def test_retrieval_top_k_validation_max():
+    """Test MatchingConfig raises ValueError when retrieval_top_k > 500."""
+    with pytest.raises(ValueError, match="exceeds maximum allowed value of 500"):
+        MatchingConfig(retrieval_top_k=501)
+
+
+def test_retrieval_top_k_default_value():
+    """Test MatchingConfig has correct default for retrieval_top_k (backward compatibility)."""
+    config = MatchingConfig.default()
+    assert config.retrieval_top_k == 20
+
+
+def test_retrieval_top_k_for_testing_override():
+    """Test for_testing() allows retrieval_top_k override."""
+    config = MatchingConfig.for_testing(retrieval_top_k=50)
+    assert config.retrieval_top_k == 50
+    # Other values should be defaults
+    assert config.default_threshold == DEFAULT_THRESHOLD

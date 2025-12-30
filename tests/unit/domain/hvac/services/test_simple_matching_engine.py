@@ -597,3 +597,228 @@ def test_integration_hybrid_scoring(engine):
     # With DN+PN match (45%) and semantic placeholder (50%)
     # Final = 0.4 * 45 + 0.6 * 50 = 18 + 30 = 48.0
     assert 47.0 <= result.score.final_score <= 49.0
+
+
+# ============================================================================
+# TESTS - AI INTEGRATION (PHASE 4)
+# ============================================================================
+
+
+@pytest.fixture
+def mock_embedding_service():
+    """Create mocked EmbeddingService for AI tests."""
+    from unittest.mock import Mock
+
+    mock = Mock()
+
+    # Mock embed_single to return deterministic embeddings based on text
+    def fake_embed_single(text, **kwargs):
+        # Generate deterministic embedding based on text hash
+        # Same text → same embedding (for caching tests)
+        hash_val = hash(text) % 100 / 100.0
+        # Return 384-dim vector
+        return [hash_val] * 384
+
+    mock.embed_single.side_effect = fake_embed_single
+    return mock
+
+
+@pytest.fixture
+def engine_with_ai(extractor, config, mock_embedding_service):
+    """Create SimpleMatchingEngine with AI enabled."""
+    return SimpleMatchingEngine(
+        parameter_extractor=extractor,
+        config=config,
+        embedding_service=mock_embedding_service,
+    )
+
+
+def test_engine_without_ai_uses_placeholder(engine):
+    """Test that engine without embedding_service uses placeholder score."""
+    source = HVACDescription(raw_text="Zawór DN50 PN16")
+    reference = HVACDescription(raw_text="Completely different text")
+
+    # Calculate semantic score directly
+    score = engine.calculate_semantic_score(source, reference)
+
+    # Should return placeholder (50.0)
+    assert score == 50.0
+
+
+def test_engine_with_ai_calculates_real_similarity(engine_with_ai, mock_embedding_service):
+    """Test that engine with embedding_service calculates real cosine similarity."""
+    source = HVACDescription(raw_text="Zawór kulowy DN50 PN16")
+    reference = HVACDescription(raw_text="Zawór kulowy DN50 PN16")  # Same text
+
+    # Generate source embedding (as match_single would do)
+    source_embedding = mock_embedding_service.embed_single(source.raw_text)
+
+    # Calculate semantic score with source_embedding
+    score = engine_with_ai.calculate_semantic_score(source, reference, source_embedding)
+
+    # Same text → same embedding → cosine similarity = 1.0 → score = 100.0
+    assert score == 100.0
+    # Should NOT be placeholder
+    assert score != 50.0
+    # embed_single should be called
+    assert mock_embedding_service.embed_single.called
+
+
+def test_calculate_semantic_score_different_texts(engine_with_ai):
+    """Test cosine similarity with different texts."""
+    source = HVACDescription(raw_text="Zawór kulowy DN50")
+    reference = HVACDescription(raw_text="Pompa obiegowa DN100")
+
+    score = engine_with_ai.calculate_semantic_score(source, reference)
+
+    # Different texts → different hash → different embeddings
+    # Score should be in valid range
+    assert 0.0 <= score <= 100.0
+    # With our hash-based mock, different texts might give various similarities
+    # The important thing is it's calculated, not placeholder (unless coincidence)
+    # We can't predict exact score, but it should be valid
+
+
+def test_source_embedding_cached_in_match_single(engine_with_ai, mock_embedding_service):
+    """Test that source embedding is cached and reused for all references."""
+    source = HVACDescription(raw_text="Zawór DN50 PN16")
+    references = [
+        HVACDescription(raw_text="Ref 1"),
+        HVACDescription(raw_text="Ref 2"),
+        HVACDescription(raw_text="Ref 3"),
+    ]
+
+    # Reset call count
+    mock_embedding_service.embed_single.reset_mock()
+
+    # Match
+    result = engine_with_ai.match_single(source, references, threshold=40.0)
+
+    # embed_single should be called 4 times:
+    # - 1x for source (cached)
+    # - 3x for references (one per reference)
+    # NOT 6 times (3 references * 2 = source + reference each time)
+    assert mock_embedding_service.embed_single.call_count == 4
+
+
+def test_embedding_failure_falls_back_to_placeholder(engine_with_ai, mock_embedding_service):
+    """Test that embedding failure gracefully falls back to placeholder."""
+    source = HVACDescription(raw_text="Test source")
+    reference = HVACDescription(raw_text="Test reference")
+
+    # Make embedding fail for reference
+    def failing_embed(text, **kwargs):
+        if "reference" in text.lower():
+            raise RuntimeError("Embedding failed")
+        # Return normal embedding for source
+        return [0.5] * 384
+
+    mock_embedding_service.embed_single.side_effect = failing_embed
+
+    # Should not crash, should return placeholder
+    score = engine_with_ai.calculate_semantic_score(source, reference)
+
+    assert score == 50.0  # Fallback to placeholder
+
+
+def test_match_single_with_ai_higher_scores(engine_with_ai, engine):
+    """Test that AI-enabled engine produces different (potentially higher) scores."""
+    source = HVACDescription(raw_text="Zawór kulowy DN50 PN16 mosiężny")
+    # Reference with similar text but no exact param matches
+    references = [
+        HVACDescription(raw_text="Kurek kulowy DN50 PN16 z mosiądzu")  # Synonyms
+    ]
+
+    # Match with AI
+    result_with_ai = engine_with_ai.match_single(source, references, threshold=40.0)
+
+    # Match without AI (placeholder)
+    result_without_ai = engine.match_single(source, references, threshold=40.0)
+
+    # Both should find a match
+    assert result_with_ai is not None
+    assert result_without_ai is not None
+
+    # AI score should be different (embeddings capture semantic similarity)
+    assert result_with_ai.score.semantic_score != result_without_ai.score.semantic_score
+    # Without AI should be placeholder (50.0)
+    assert result_without_ai.score.semantic_score == 50.0
+
+
+def test_backward_compatibility_no_embedding_service():
+    """Test that engine works without embedding_service (backward compatible)."""
+    extractor = ConcreteParameterExtractor()
+    config = MatchingConfig.default()
+
+    # Create engine without embedding_service (old way)
+    engine_old = SimpleMatchingEngine(
+        parameter_extractor=extractor,
+        config=config,
+        # No embedding_service parameter
+    )
+
+    source = HVACDescription(raw_text="Zawór DN50 PN16")
+    references = [HVACDescription(raw_text="Zawór DN50 PN16")]
+
+    # Should work normally with placeholder semantic score
+    result = engine_old.match_single(source, references, threshold=40.0)
+
+    assert result is not None
+    assert result.score.semantic_score == 50.0
+
+
+def test_zero_norm_vector_handled_gracefully(engine_with_ai, mock_embedding_service):
+    """Test that zero-norm vectors don't crash cosine similarity."""
+    source = HVACDescription(raw_text="Test")
+    reference = HVACDescription(raw_text="Ref")
+
+    # Mock to return zero vector for reference
+    def zero_embed(text, **kwargs):
+        if "Ref" in text:
+            return [0.0] * 384  # Zero vector
+        return [0.5] * 384  # Normal vector for source
+
+    mock_embedding_service.embed_single.side_effect = zero_embed
+
+    # Should not crash, should return placeholder
+    score = engine_with_ai.calculate_semantic_score(source, reference)
+
+    assert score == 50.0  # Fallback to placeholder
+
+
+def test_cosine_similarity_score_range(engine_with_ai):
+    """Test that cosine similarity scores are in valid 0-100 range."""
+    source = HVACDescription(raw_text="Zawór DN50")
+    references = [
+        HVACDescription(raw_text="Zawór DN50"),  # High similarity
+        HVACDescription(raw_text="Pompa DN100"),  # Low similarity
+        HVACDescription(raw_text="Different equipment entirely"),  # Very low
+    ]
+
+    for ref in references:
+        score = engine_with_ai.calculate_semantic_score(source, ref)
+
+        # Score must be in valid range
+        assert 0.0 <= score <= 100.0
+        # Should not be exactly placeholder (real calculation)
+        # (unless by coincidence, but very unlikely)
+
+
+def test_logging_mode_detection(engine, engine_with_ai, caplog):
+    """Test that matching mode is logged (AI vs placeholder)."""
+    import logging
+
+    caplog.set_level(logging.INFO)
+
+    source = HVACDescription(raw_text="Zawór DN50")
+    references = [HVACDescription(raw_text="Zawór DN50")]
+
+    # Engine without AI
+    engine.match_single(source, references)
+    assert "Placeholder" in caplog.text or "placeholder" in caplog.text
+
+    caplog.clear()
+
+    # Engine with AI
+    engine_with_ai.match_single(source, references)
+    assert "AI-enabled" in caplog.text or "embeddings" in caplog.text

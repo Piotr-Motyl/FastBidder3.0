@@ -184,6 +184,7 @@ class MatchingConfig:
         min_score_gap_for_high_confidence: Minimum score gap to second-best for high confidence (10.0)
         enable_fast_fail: Whether to use fast-fail optimization (True)
         semantic_placeholder: Placeholder value for semantic score in Phase 2/3 (0.5)
+        retrieval_top_k: Number of top-K candidates to retrieve in Stage 1 (Phase 4, default: 20)
 
     Usage:
         config = MatchingConfig.default()
@@ -198,14 +199,29 @@ class MatchingConfig:
     enable_fast_fail: bool = ENABLE_FAST_FAIL
     semantic_placeholder: float = SEMANTIC_PLACEHOLDER_VALUE
 
+    # Phase 4: Two-Stage Pipeline Configuration (HybridMatchingEngine)
+    retrieval_top_k: int = 20  # Stage 1: Number of candidates to retrieve from ChromaDB
+
     def __post_init__(self) -> None:
-        """Validate hybrid weights sum to 1.0"""
+        """Validate hybrid weights sum to 1.0 and retrieval_top_k range"""
         total = self.hybrid_param_weight + self.hybrid_semantic_weight
         if not 0.99 <= total <= 1.01:
             raise ValueError(
                 f"Hybrid weights must sum to 1.0, got {total:.4f}. "
                 f"param_weight={self.hybrid_param_weight}, "
                 f"semantic_weight={self.hybrid_semantic_weight}"
+            )
+
+        # Phase 4: Validate retrieval_top_k (Stage 1 candidate count)
+        if self.retrieval_top_k < 1:
+            raise ValueError(
+                "retrieval_top_k must be at least 1 "
+                "(cannot retrieve zero candidates)"
+            )
+        if self.retrieval_top_k > 500:
+            raise ValueError(
+                f"retrieval_top_k={self.retrieval_top_k} exceeds maximum allowed value of 500. "
+                f"Stage 2 scoring would be too slow. Consider reducing to <200."
             )
 
     @classmethod
@@ -285,6 +301,7 @@ class MatchingConfig:
             "min_score_gap_for_high_confidence": MIN_SCORE_GAP_FOR_HIGH_CONFIDENCE,
             "enable_fast_fail": ENABLE_FAST_FAIL,
             "semantic_placeholder": SEMANTIC_PLACEHOLDER_VALUE,
+            "retrieval_top_k": 20,  # Phase 4: Two-stage pipeline candidate count
         }
 
         # Apply overrides

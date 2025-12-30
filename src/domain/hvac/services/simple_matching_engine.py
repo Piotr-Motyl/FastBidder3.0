@@ -28,6 +28,7 @@ Design Decisions:
     - Weights configurable via MatchingConfig dependency injection
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -35,7 +36,10 @@ from src.domain.hvac.entities.hvac_description import HVACDescription
 from src.domain.hvac.value_objects.match_result import MatchResult
 from src.domain.hvac.value_objects.extracted_parameters import ExtractedParameters
 from src.domain.hvac.services.parameter_extractor import ParameterExtractorProtocol
+from src.domain.hvac.services.embedding_service import EmbeddingServiceProtocol
 from src.domain.hvac.matching_config import MatchingConfig
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -72,11 +76,18 @@ class SimpleMatchingEngine:
     Attributes:
         parameter_extractor: Service for extracting HVAC parameters from text
         config: Configuration with weights, thresholds, and feature flags
+        embedding_service: Optional service for AI semantic similarity (Phase 4)
+            - If None: uses placeholder semantic_score (50.0)
+            - If provided: calculates real cosine similarity using embeddings
 
     Usage Example (conceptual - Phase 3 implementation):
         >>> extractor = ConcreteParameterExtractor()
         >>> config = MatchingConfig.default()
         >>> engine = SimpleMatchingEngine(extractor, config)
+        >>>
+        >>> # Phase 4: With AI embeddings
+        >>> embedding_service = EmbeddingService()
+        >>> engine_with_ai = SimpleMatchingEngine(extractor, config, embedding_service)
         >>>
         >>> source = HVACDescription(
         ...     id=UUID(...),
@@ -97,6 +108,7 @@ class SimpleMatchingEngine:
 
     parameter_extractor: ParameterExtractorProtocol
     config: MatchingConfig = field(default_factory=MatchingConfig.default)
+    embedding_service: Optional[EmbeddingServiceProtocol] = None
 
     def match_single(
         self,
@@ -201,6 +213,16 @@ class SimpleMatchingEngine:
         # Step 1: Validate inputs and prepare threshold
         threshold = threshold if threshold is not None else self.config.default_threshold
 
+        # Log mode (AI vs placeholder)
+        if self.embedding_service is not None:
+            logger.info(
+                f"Matching mode: AI-enabled (using real embeddings for semantic scoring)"
+            )
+        else:
+            logger.info(
+                f"Matching mode: Placeholder (using semantic_placeholder={self.config.semantic_placeholder * 100.0})"
+            )
+
         # Empty reference list = no matches possible
         if not reference_descriptions:
             return None
@@ -217,6 +239,24 @@ class SimpleMatchingEngine:
 
         # Step 3: Score each reference description
         results: list[tuple[HVACDescription, float, dict[str, Any], float, float]] = []
+
+        # Cache source embedding for efficiency (used in all semantic comparisons)
+        # Only generate once if embedding_service is available
+        source_embedding: Optional[list[float]] = None
+        if self.embedding_service is not None:
+            try:
+                source_embedding = self.embedding_service.embed_single(
+                    source_description.raw_text
+                )
+                logger.debug(
+                    f"Generated source embedding (dim={len(source_embedding)}) "
+                    f"for: {source_description.raw_text[:50]}..."
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to generate source embedding, falling back to placeholder: {e}"
+                )
+                # Fall back to placeholder mode (source_embedding remains None)
 
         for ref_desc in reference_descriptions:
             # Extract parameters from reference if needed
@@ -241,8 +281,10 @@ class SimpleMatchingEngine:
                 source_params, ref_params
             )
 
-            # Calculate semantic score (Phase 3: placeholder returns 50.0)
-            semantic_score = self.calculate_semantic_score(source_description, ref_desc)
+            # Calculate semantic score (Phase 4: uses real embeddings if available)
+            semantic_score = self.calculate_semantic_score(
+                source_description, ref_desc, source_embedding
+            )
 
             # Combine scores with weights (40% param + 60% semantic)
             final_score = (
@@ -484,6 +526,9 @@ class SimpleMatchingEngine:
                 "voltage": weights.voltage * voltage_match * 100.0,
                 "manufacturer": weights.manufacturer * manufacturer_match * 100.0,
             },
+            # Phase 4 AI Metadata: SimpleMatchingEngine operates without AI when used standalone
+            "using_ai": False,  # No AI embeddings used (parameter-only matching)
+            "ai_model": None,  # No AI model available
         }
 
         return parameter_score, breakdown
@@ -492,52 +537,106 @@ class SimpleMatchingEngine:
         self,
         source_description: HVACDescription,
         reference_description: HVACDescription,
+        source_embedding: Optional[list[float]] = None,
     ) -> float:
         """
         Calculate semantic similarity score using AI embeddings.
 
-        **PHASE 2/3 PLACEHOLDER**: This method returns a neutral fixed value (0.5)
-        because AI integration happens in Phase 4. The contract is defined now
-        to prepare for future implementation.
-
-        **PHASE 4 IMPLEMENTATION** (future):
-        1. Generate embedding for source.raw_text
-        2. Generate embedding for reference.raw_text
-        3. Calculate cosine similarity between embeddings
-        4. Convert similarity (-1 to 1) to score (0 to 100)
+        **PHASE 4 IMPLEMENTATION** (current):
+        - If embedding_service available and source_embedding provided:
+          1. Generate embedding for reference.raw_text
+          2. Calculate cosine similarity between source and reference embeddings
+          3. Convert similarity (-1 to 1) to score (0 to 100)
+        - If embedding_service not available or embedding fails:
+          Returns placeholder value (config.semantic_placeholder × 100 = 50.0)
 
         Args:
             source_description: Source HVAC description
             reference_description: Reference HVAC description
+            source_embedding: Optional pre-computed source embedding (for efficiency)
+                If provided, avoids re-computing source embedding for each reference
 
         Returns:
             Semantic similarity score (0-100)
 
-            Phase 2/3: Always returns 50.0 (neutral placeholder)
-            Phase 4: Returns actual cosine similarity × 100
+            - With AI: Returns actual cosine similarity × 100 (0-100 range)
+            - Without AI: Returns 50.0 (neutral placeholder)
 
         Business Rules:
-            - Phase 2/3: Return config.semantic_placeholder × 100 (= 50.0)
-            - Phase 4: Use paraphrase-multilingual-mpnet-base-v2 model
-            - Phase 4: Cache embeddings in Infrastructure Layer (Redis)
+            - Cosine similarity range: -1 to 1, but typically 0 to 1 for text
+            - Convert to 0-100 scale by multiplying by 100
             - Synonyms and variations should score highly (e.g., "kurek" vs "zawór")
+            - Backward compatible: works without AI (placeholder mode)
 
         Examples:
-            >>> # Phase 2/3 behavior (placeholder)
+            >>> # With AI embeddings
             >>> source = HVACDescription(raw_text="Zawór kulowy DN50")
             >>> reference = HVACDescription(raw_text="Kurek kulowy DN50")
-            >>> score = engine.calculate_semantic_score(source, reference)
-            >>> score
-            50.0  # Fixed placeholder value
+            >>> source_emb = embedding_service.embed_single(source.raw_text)
+            >>> score = engine.calculate_semantic_score(source, reference, source_emb)
+            >>> score >= 85.0  # High similarity (synonyms)
+            True
             >>>
-            >>> # Phase 4 behavior (future - not implemented yet)
-            >>> # source = HVACDescription(raw_text="Zawór kulowy DN50")
-            >>> # reference = HVACDescription(raw_text="Kurek kulowy DN50")
-            >>> # score = engine.calculate_semantic_score(source, reference)
-            >>> # score would be ~95.0 (synonyms, high similarity)
+            >>> # Without AI (placeholder mode)
+            >>> engine_no_ai = SimpleMatchingEngine(extractor, config)  # No embedding_service
+            >>> score = engine_no_ai.calculate_semantic_score(source, reference)
+            >>> score
+            50.0  # Placeholder value
         """
-        # Phase 2/3: Return placeholder
-        return self.config.semantic_placeholder * 100.0
+        # If no embedding service or no source embedding → use placeholder
+        if self.embedding_service is None or source_embedding is None:
+            logger.debug("Using placeholder semantic score (AI not available)")
+            return self.config.semantic_placeholder * 100.0
+
+        # Generate reference embedding
+        try:
+            reference_embedding = self.embedding_service.embed_single(
+                reference_description.raw_text
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to generate reference embedding, using placeholder: {e}"
+            )
+            return self.config.semantic_placeholder * 100.0
+
+        # Calculate cosine similarity
+        try:
+            import numpy as np
+
+            # Convert to numpy arrays for efficient computation
+            source_vec = np.array(source_embedding)
+            reference_vec = np.array(reference_embedding)
+
+            # Cosine similarity: dot(A, B) / (norm(A) * norm(B))
+            dot_product = np.dot(source_vec, reference_vec)
+            norm_source = np.linalg.norm(source_vec)
+            norm_reference = np.linalg.norm(reference_vec)
+
+            # Avoid division by zero
+            if norm_source == 0 or norm_reference == 0:
+                logger.warning("Zero-norm vector encountered, using placeholder")
+                return self.config.semantic_placeholder * 100.0
+
+            cosine_similarity = dot_product / (norm_source * norm_reference)
+
+            # Convert to 0-100 scale
+            # Cosine similarity range: -1 to 1, but typically 0 to 1 for text
+            # Multiply by 100 to get 0-100 score
+            semantic_score = cosine_similarity * 100.0
+
+            # Clamp to valid range (safety check)
+            semantic_score = max(0.0, min(100.0, semantic_score))
+
+            logger.debug(
+                f"Calculated semantic score: {semantic_score:.2f} "
+                f"(cosine_sim: {cosine_similarity:.4f})"
+            )
+
+            return semantic_score
+
+        except Exception as e:
+            logger.error(f"Error calculating cosine similarity, using placeholder: {e}")
+            return self.config.semantic_placeholder * 100.0
 
     def should_fast_fail(
         self,

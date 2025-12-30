@@ -117,9 +117,141 @@ def test_get_job_status_cache_headers(client, mock_get_job_status_query, sample_
     # Note: Actual header check depends on implementation
 
 
-# Summary: 5 tests covering
+# ============================================================================
+# PHASE 4: AI MATCHING - API SCHEMA UPDATES TESTS
+# ============================================================================
+
+
+def test_get_job_status_with_ai_matching_enabled(client, sample_job_id):
+    """
+    Test Phase 4: JobStatusResponse includes AI matching fields when enabled.
+
+    Verifies:
+    - Response includes using_ai=True
+    - Response includes ai_model name
+    """
+    # Arrange
+    from src.application.queries.get_job_status import JobStatusResult
+    from src.application.models import JobStatus
+
+    mock_handler = MagicMock()
+    mock_result = JobStatusResult(
+        job_id=sample_job_id,
+        status=JobStatus.COMPLETED.value,
+        progress=100,
+        message="Matching completed successfully",
+        result_ready=True,
+        current_step="COMPLETE",
+        # Phase 4: AI matching fields
+        using_ai=True,
+        ai_model="paraphrase-multilingual-MiniLM-L12-v2",
+    )
+    mock_handler.handle.return_value = mock_result
+
+    with patch(
+        "src.api.routers.jobs.get_job_status_query_handler",
+        return_value=mock_handler,
+    ):
+        # Act
+        response = client.get(f"/api/jobs/{sample_job_id}/status")
+
+    # Assert
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()
+    assert data["using_ai"] is True
+    assert data["ai_model"] == "paraphrase-multilingual-MiniLM-L12-v2"
+
+
+def test_get_job_status_with_ai_matching_disabled(client, sample_job_id):
+    """
+    Test Phase 4: JobStatusResponse with AI matching disabled.
+
+    Verifies:
+    - Response includes using_ai=False
+    - Response includes ai_model=None
+    """
+    # Arrange
+    from src.application.queries.get_job_status import JobStatusResult
+    from src.application.models import JobStatus
+
+    mock_handler = MagicMock()
+    mock_result = JobStatusResult(
+        job_id=sample_job_id,
+        status=JobStatus.COMPLETED.value,
+        progress=100,
+        message="Matching completed successfully",
+        result_ready=True,
+        current_step="COMPLETE",
+        # Phase 4: AI matching disabled
+        using_ai=False,
+        ai_model=None,
+    )
+    mock_handler.handle.return_value = mock_result
+
+    with patch(
+        "src.api.routers.jobs.get_job_status_query_handler",
+        return_value=mock_handler,
+    ):
+        # Act
+        response = client.get(f"/api/jobs/{sample_job_id}/status")
+
+    # Assert
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()
+    assert data["using_ai"] is False
+    assert data["ai_model"] is None
+
+
+def test_get_job_status_backward_compatibility_ai_fields(client, sample_job_id):
+    """
+    Test Phase 4: Backward compatibility - AI fields have defaults.
+
+    Verifies:
+    - Old clients can still parse response
+    - New AI fields have sensible defaults (using_ai=False, ai_model=None)
+    """
+    # Arrange
+    from src.application.queries.get_job_status import JobStatusResult
+    from src.application.models import JobStatus
+
+    mock_handler = MagicMock()
+    # Simulate old JobStatusResult without AI fields (defaults should apply)
+    mock_result = JobStatusResult(
+        job_id=sample_job_id,
+        status=JobStatus.PROCESSING.value,
+        progress=50,
+        message="Processing...",
+        result_ready=False,
+    )
+    mock_handler.handle.return_value = mock_result
+
+    with patch(
+        "src.api.routers.jobs.get_job_status_query_handler",
+        return_value=mock_handler,
+    ):
+        # Act
+        response = client.get(f"/api/jobs/{sample_job_id}/status")
+
+    # Assert
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()
+    # Old fields still present
+    assert "job_id" in data
+    assert "status" in data
+    assert "progress" in data
+    # New AI fields with defaults
+    assert data["using_ai"] is False  # Default value
+    assert data["ai_model"] is None  # Default value
+
+
+# Summary: 8 tests covering (5 original + 3 Phase 4)
+# Original:
 # - Success scenario
 # - Job not found
 # - Invalid UUID
 # - Query error
 # - Cache headers
+# Phase 4 (API Schema Updates):
+# - AI matching enabled (using_ai=True, ai_model present)
+# - AI matching disabled (using_ai=False, ai_model=None)
+# - Backward compatibility (defaults for AI fields)

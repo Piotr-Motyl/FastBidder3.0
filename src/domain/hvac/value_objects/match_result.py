@@ -120,7 +120,34 @@ class MatchResult(BaseModel):
     )
 
     breakdown: dict[str, Any] = Field(
-        ..., description="Structured details for debugging and analytics"
+        ...,
+        description="""Structured details for debugging and analytics.
+
+        Phase 4 AI Metadata (populated by matching engine):
+
+        When using HybridMatchingEngine (AI-enabled matching):
+            - using_ai (bool): True - indicates AI embeddings were used
+            - ai_model (str): Name of embedding model used for semantic matching
+              (e.g., "paraphrase-multilingual-MiniLM-L12-v2")
+              Model name is dynamically retrieved from EmbeddingService
+            - stage1_candidates (int): Number of candidates retrieved in Stage 1
+              (for debugging and performance analysis)
+            - retrieval_top_k (int): Configuration value for top-K retrieval
+
+        When using SimpleMatchingEngine (standalone, no AI):
+            - using_ai (bool): False - indicates no AI was used (parameter-only matching)
+            - ai_model (None): No AI model used
+
+        Additional Fields (always present):
+            - parameter_matches (dict): Details of DN, PN, material, type matching
+            - semantic_similarity (float): Cosine similarity score (0-1)
+            - score_gap_to_second (float): Score difference to second-best match
+
+        Usage:
+            To verify if AI was used in matching, check breakdown["using_ai"].
+            This field determines whether score.semantic_score contains real AI data
+            or a placeholder value.
+        """,
     )
 
     model_config = {

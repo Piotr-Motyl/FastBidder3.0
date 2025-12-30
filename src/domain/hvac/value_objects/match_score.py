@@ -39,10 +39,13 @@ class MatchScore(BaseModel):
             - 0 = no parameters match
             - Calculated by comparing DN, PN, material, valve type, etc.
 
-        semantic_score: Score from semantic similarity (0-100)
+        semantic_score: Score from semantic similarity (0-100) - also known as "ai_score"
             - Based on cosine similarity of sentence embeddings
             - Handles synonyms, variations, typos
             - Uses multilingual model (Polish + English)
+            - When using_ai=True (HybridMatchingEngine): Real AI embeddings score
+            - When using_ai=False (SimpleMatchingEngine standalone): Placeholder (0.0)
+            - NOTE: Check breakdown["using_ai"] to determine the source of this score
 
         final_score: Weighted average (0-100)
             - Calculated as: 0.4 * parameter_score + 0.6 * semantic_score
@@ -51,6 +54,10 @@ class MatchScore(BaseModel):
         threshold: Minimum score for a valid match (default 75.0)
             - Configurable per request
             - Business rule: matches below threshold are rejected
+
+    Phase 4 Note:
+        The semantic_score field serves as the "ai_score" mentioned in requirements.
+        To verify if AI was actually used, check the MatchResult.breakdown["using_ai"] field.
 
     Examples:
         >>> # Strong match (both high)

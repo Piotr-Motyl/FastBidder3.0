@@ -86,3 +86,10 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 addopts = "-v --cov=src --cov-report=term-missing"
+asyncio_mode = "auto"
+markers = [
+    "integration: Integration tests with real services (may be slow)",
+    "slow: Tests that take >5 seconds (model loading, etc.)",
+    "e2e: End-to-end tests",
+    "chromadb: Tests requiring ChromaDB",
+]
