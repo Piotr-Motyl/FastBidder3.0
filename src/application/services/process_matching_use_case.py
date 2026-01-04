@@ -307,9 +307,6 @@ class ProcessMatchingUseCase:
             This method defines the interface contract with detailed documentation.
             Actual implementation will be added in Phase 3 - Task 3.2.1.
         """
-        # Import process_matching_task here to avoid circular imports
-        from src.application.tasks.matching_tasks import process_matching_task
-
         # Step 1: Validate command business rules
         command.validate_business_rules()
         logger.debug(
@@ -356,11 +353,12 @@ class ProcessMatchingUseCase:
         logger.info(f"Celery task triggered with task_id: {task_result.id}")
 
         # Steps 9-10: Create and return result
+        # Use the job_id we generated (same as task_id we passed to Celery)
         return ProcessMatchingResult(
-            job_id=UUID(task_result.id),
+            job_id=UUID(job_id),
             status=JobStatus.QUEUED,
             estimated_time=estimated_time,
-            message=f"Matching job queued successfully. Check status at GET /jobs/{task_result.id}/status",
+            message=f"Matching job queued successfully. Check status at GET /jobs/{job_id}/status",
         )
 
     async def _validate_files(self, command: ProcessMatchingCommand) -> None:

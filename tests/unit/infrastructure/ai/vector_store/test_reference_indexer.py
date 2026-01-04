@@ -27,7 +27,7 @@ from src.infrastructure.ai.vector_store.reference_indexer import (
 @pytest.fixture
 def temp_chroma_dir():
     """Temporary directory for ChromaDB storage."""
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         yield tmpdir
 
 

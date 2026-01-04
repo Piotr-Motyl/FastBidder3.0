@@ -23,7 +23,7 @@ def temp_chroma_dir():
     Creates a temp directory that's automatically cleaned up after test.
     Each test gets a fresh, isolated ChromaDB instance.
     """
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         yield tmpdir
 
 
@@ -312,8 +312,8 @@ def test_uses_default_when_no_env_and_no_param(temp_chroma_dir, monkeypatch):
         client = ChromaClient()
 
         # Assert
-        # When cwd is temp_chroma_dir, default "./data/chroma" becomes temp_chroma_dir/data/chroma
-        expected_path = Path(temp_chroma_dir) / "data" / "chroma"
+        # When cwd is temp_chroma_dir, default "./data/chroma_db" becomes temp_chroma_dir/data/chroma_db
+        expected_path = Path(temp_chroma_dir) / "data" / "chroma_db"
         # Normalize paths for comparison (resolve() converts to absolute)
         assert client.persist_directory.resolve() == expected_path.resolve()
         assert expected_path.exists()

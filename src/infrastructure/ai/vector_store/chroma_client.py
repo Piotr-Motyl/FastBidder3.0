@@ -14,7 +14,6 @@ from typing import Any
 
 import chromadb
 from chromadb.config import Settings
-from chromadb.errors import NotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +56,8 @@ class ChromaClient:
     COLLECTION_NAME = "reference_descriptions"
 
     # Default persist directory if not set in env
-    DEFAULT_PERSIST_DIR = "./data/chroma"
+    # NOTE: Must match CHROMA_PERSIST_DIR in .env for consistency
+    DEFAULT_PERSIST_DIR = "./data/chroma_db"
 
     def __init__(self, persist_directory: str | None = None) -> None:
         """
@@ -151,8 +151,9 @@ class ChromaClient:
         try:
             self._client.delete_collection(collection_name)
             logger.info(f"Deleted collection: {collection_name}")
-        except NotFoundError:
-            logger.warning(f"Collection not found: {collection_name}")
+        except Exception as e:
+            # ChromaDB 0.4.0 doesn't have NotFoundError - catch all exceptions
+            logger.warning(f"Failed to delete collection {collection_name}: {e}")
 
     def health_check(self) -> bool:
         """

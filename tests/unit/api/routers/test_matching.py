@@ -27,8 +27,19 @@ def test_process_matching_success(client, mock_process_matching_use_case, sample
     reference_file_id = str(uuid4())
 
     payload = {
-        "working_file_id": working_file_id,
-        "reference_file_id": reference_file_id,
+        "working_file": {
+            "file_id": working_file_id,
+            "description_column": "A",
+            "description_range": {"start": 2, "end": 10},
+            "price_target_column": "B",
+            "matching_report_column": "D",
+        },
+        "reference_file": {
+            "file_id": reference_file_id,
+            "description_column": "A",
+            "description_range": {"start": 2, "end": 50},
+            "price_source_column": "B",
+        },
         "matching_threshold": 75.0,
     }
 
@@ -55,9 +66,23 @@ def test_process_matching_invalid_threshold(client):
     - Returns 422 Unprocessable Entity for threshold outside 0-100 range
     """
     # Arrange
+    working_file_id = str(uuid4())
+    reference_file_id = str(uuid4())
+
     payload = {
-        "working_file_id": str(uuid4()),
-        "reference_file_id": str(uuid4()),
+        "working_file": {
+            "file_id": working_file_id,
+            "description_column": "A",
+            "description_range": {"start": 2, "end": 10},
+            "price_target_column": "B",
+            "matching_report_column": "D",
+        },
+        "reference_file": {
+            "file_id": reference_file_id,
+            "description_column": "A",
+            "description_range": {"start": 2, "end": 50},
+            "price_source_column": "B",
+        },
         "matching_threshold": 150.0,  # Invalid - above 100
     }
 
@@ -97,8 +122,19 @@ def test_process_matching_invalid_file_id_format(client):
     """
     # Arrange
     payload = {
-        "working_file_id": "not-a-uuid",
-        "reference_file_id": "also-not-a-uuid",
+        "working_file": {
+            "file_id": "not-a-uuid",  # Invalid UUID format
+            "description_column": "A",
+            "description_range": {"start": 2, "end": 10},
+            "price_target_column": "B",
+            "matching_report_column": "D",
+        },
+        "reference_file": {
+            "file_id": "also-not-a-uuid",  # Invalid UUID format
+            "description_column": "A",
+            "description_range": {"start": 2, "end": 50},
+            "price_source_column": "B",
+        },
         "matching_threshold": 75.0,
     }
 
@@ -116,15 +152,31 @@ def test_process_matching_use_case_error(client):
     Verifies:
     - Returns 500 Internal Server Error
     """
+    from unittest.mock import AsyncMock, MagicMock
+
     # Arrange
+    working_file_id = str(uuid4())
+    reference_file_id = str(uuid4())
+
     payload = {
-        "working_file_id": str(uuid4()),
-        "reference_file_id": str(uuid4()),
+        "working_file": {
+            "file_id": working_file_id,
+            "description_column": "A",
+            "description_range": {"start": 2, "end": 10},
+            "price_target_column": "B",
+            "matching_report_column": "D",
+        },
+        "reference_file": {
+            "file_id": reference_file_id,
+            "description_column": "A",
+            "description_range": {"start": 2, "end": 50},
+            "price_source_column": "B",
+        },
         "matching_threshold": 75.0,
     }
 
     mock_use_case = MagicMock()
-    mock_use_case.execute.side_effect = Exception("Celery connection error")
+    mock_use_case.execute = AsyncMock(side_effect=Exception("Celery connection error"))
 
     with patch(
         "src.api.routers.matching.ProcessMatchingUseCase", return_value=mock_use_case
@@ -145,9 +197,23 @@ def test_process_matching_with_optional_parameters(client, mock_process_matching
     - Returns 202 Accepted
     """
     # Arrange
+    working_file_id = str(uuid4())
+    reference_file_id = str(uuid4())
+
     payload = {
-        "working_file_id": str(uuid4()),
-        "reference_file_id": str(uuid4()),
+        "working_file": {
+            "file_id": working_file_id,
+            "description_column": "A",
+            "description_range": {"start": 2, "end": 10},
+            "price_target_column": "B",
+            "matching_report_column": "D",
+        },
+        "reference_file": {
+            "file_id": reference_file_id,
+            "description_column": "A",
+            "description_range": {"start": 2, "end": 50},
+            "price_source_column": "B",
+        },
         "matching_threshold": 80.0,
         "matching_strategy": "best_match",
         "report_format": "detailed",

@@ -116,6 +116,7 @@ class HybridMatchingEngine:
         semantic_retriever: SemanticRetrieverProtocol,
         simple_matching_engine: SimpleMatchingEngine,
         config: MatchingConfig | None = None,
+        reference_file_id: str | None = None,
     ) -> None:
         """
         Initialize hybrid matching engine with dependencies.
@@ -124,19 +125,27 @@ class HybridMatchingEngine:
             semantic_retriever: Retriever for Stage 1 (candidate retrieval)
             simple_matching_engine: Scorer for Stage 2 (precise matching)
             config: Optional configuration (defaults to MatchingConfig.default())
+            reference_file_id: Optional file_id to filter ChromaDB queries.
+                If provided, only searches within this specific reference file.
+                This prevents matches from other files in the database (e.g., from previous test runs).
 
         Examples:
             >>> engine = HybridMatchingEngine(
             ...     semantic_retriever=retriever,
             ...     simple_matching_engine=scorer,
-            ...     config=MatchingConfig.default()
+            ...     config=MatchingConfig.default(),
+            ...     reference_file_id="3e5bc285-b710-4b5f-911e-58d2524bfce8"
             ... )
         """
         self.semantic_retriever = semantic_retriever
         self.simple_matching_engine = simple_matching_engine
         self.config = config or MatchingConfig.default()
+        self.reference_file_id = reference_file_id
 
-        logger.info("HybridMatchingEngine initialized (two-stage pipeline)")
+        logger.info(
+            f"HybridMatchingEngine initialized (two-stage pipeline, "
+            f"reference_file_id={'set' if reference_file_id else 'not set'})"
+        )
 
     async def match(
         self,
@@ -311,6 +320,14 @@ class HybridMatchingEngine:
         # Build metadata filters from extracted parameters
         filters = self._build_metadata_filters(source_description)
 
+        # Add file_id filter to restrict search to current reference file
+        # This prevents matches from other files in ChromaDB (e.g., from previous test runs)
+        if self.reference_file_id:
+            if filters is None:
+                filters = {}
+            filters["file_id"] = self.reference_file_id
+            logger.debug(f"Added file_id filter: {self.reference_file_id}")
+
         # Retrieve candidates with filters
         top_k = self.config.retrieval_top_k
 
@@ -322,22 +339,30 @@ class HybridMatchingEngine:
                 top_k=top_k,
             )
 
-            # Fallback: If no candidates with filters, try without filters
+            # Fallback: If no candidates with filters, try without HVAC filters but keep file_id filter
+            # This ensures we still only search within the current reference file
             if not candidates:
                 logger.warning(
-                    "No candidates with filters, retrying without filters (semantic-only)"
+                    "No candidates with full filters, retrying with file_id-only filter (semantic-only)"
                 )
+                # Create file_id-only filter for fallback search
+                fallback_filters = {"file_id": self.reference_file_id} if self.reference_file_id else None
                 candidates = self.semantic_retriever.retrieve(
                     query_text=source_description.raw_text,
-                    filters=None,
+                    filters=fallback_filters,
                     top_k=top_k,
                 )
         else:
-            # No filters available, semantic-only search
-            logger.debug("No filters available, using semantic-only search")
+            # No HVAC parameter filters, but may have file_id filter
+            # Use file_id-only filter for semantic-only search if available
+            fallback_filters = {"file_id": self.reference_file_id} if self.reference_file_id else None
+            logger.debug(
+                f"No HVAC parameter filters, using semantic-only search "
+                f"(file_id filter: {'set' if self.reference_file_id else 'not set'})"
+            )
             candidates = self.semantic_retriever.retrieve(
                 query_text=source_description.raw_text,
-                filters=None,
+                filters=fallback_filters,
                 top_k=top_k,
             )
 

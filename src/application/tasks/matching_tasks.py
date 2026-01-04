@@ -589,10 +589,12 @@ def process_matching_task(
                 )
 
                 # Create HybridMatchingEngine (two-stage pipeline: retrieval + scoring)
+                # Pass reference file_id to filter ChromaDB queries to current reference file only
                 matching_engine = HybridMatchingEngine(
                     semantic_retriever=semantic_retriever,
                     simple_matching_engine=simple_engine,
                     config=config,
+                    reference_file_id=reference_file["file_id"],  # Filter queries by file_id
                 )
 
                 using_ai = True
@@ -784,14 +786,74 @@ def process_matching_task(
                 wf_desc.apply_match_result(match_result)
 
                 # Find matched reference description by ID
-                matched_ref_desc = next(
-                    (
-                        desc
-                        for desc in ref_descriptions
-                        if desc.id == match_result.matched_reference_id
-                    ),
-                    None,
-                )
+                # For AI matching: ref_descriptions is empty, retrieve from DataFrame
+                # For non-AI matching: find in ref_descriptions list
+                matched_ref_desc = None
+
+                if using_ai:
+                    # AI matching: parse matched_reference_id and retrieve price from DataFrame
+                    # Format: "{file_id}_{row_number}" where row_number is Excel row (1-based)
+                    try:
+                        # Parse ChromaDB ID to extract row number
+                        # Example: "687bfd5e-a4f9-4dd8-b5e6-a953efc2bde7_2" → row 2
+                        id_parts = match_result.matched_reference_id.split("_")
+
+                        if len(id_parts) >= 2:
+                            # Last part is source_row_number (1-based Excel row)
+                            source_row_number = int(id_parts[-1])
+
+                            # Calculate 0-based DataFrame index
+                            # source_row_number is Excel row from metadata (e.g., 2 for first data row)
+                            # ref_range_start is 0-based DataFrame index for range start
+                            # Need to find offset from range start
+                            df_index = source_row_number - (reference_file["description_range"]["start"])
+
+                            # Get price from reference DataFrame
+                            if 0 <= df_index < len(ref_prices):
+                                price_value = ref_prices[df_index]
+                                ref_text = ref_raw_texts[df_index] if df_index < len(ref_raw_texts) else ""
+
+                                # Create HVACDescription with price for consistent processing
+                                matched_ref_desc = HVACDescription(
+                                    raw_text=str(ref_text) if ref_text else ""
+                                )
+
+                                # Set price if available
+                                if price_value and price_value != "":
+                                    matched_ref_desc.matched_price = Decimal(str(price_value))
+
+                                logger.debug(
+                                    f"AI matching: Retrieved price for row {source_row_number}: "
+                                    f"{price_value if price_value else 'N/A'}"
+                                )
+                            else:
+                                logger.warning(
+                                    f"AI matching: Row index {df_index} out of range "
+                                    f"(total {len(ref_prices)} prices)"
+                                )
+                        else:
+                            logger.warning(
+                                f"AI matching: Invalid matched_reference_id format: "
+                                f"{match_result.matched_reference_id}"
+                            )
+
+                    except Exception as e:
+                        logger.error(
+                            f"AI matching: Failed to retrieve price from DataFrame: {e}",
+                            exc_info=True
+                        )
+                        matched_ref_desc = None
+
+                else:
+                    # Non-AI matching: find in ref_descriptions list
+                    matched_ref_desc = next(
+                        (
+                            desc
+                            for desc in ref_descriptions
+                            if desc.id == match_result.matched_reference_id
+                        ),
+                        None,
+                    )
 
                 if matched_ref_desc:
                     # Write price to target column (Excel 1-based row)

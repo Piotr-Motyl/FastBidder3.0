@@ -8,14 +8,14 @@ Covers:
 - Error handling
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 from fastapi import status
 
 
-def test_get_job_status_success(client, mock_get_job_status_query, sample_job_id):
+def test_get_job_status_success(client, sample_job_id):
     """
     Test successful job status retrieval.
 
@@ -24,19 +24,40 @@ def test_get_job_status_success(client, mock_get_job_status_query, sample_job_id
     - Response contains job_id, status, progress, message
     """
     # Arrange
-    with patch(
-        "src.api.routers.jobs.GetJobStatusQuery",
-        return_value=mock_get_job_status_query,
-    ):
+    from src.application.queries.get_job_status import JobStatusResult
+    from src.application.models import JobStatus
+    from src.api.routers.jobs import get_job_status_query_handler
+
+    mock_handler = MagicMock()
+    mock_result = JobStatusResult(
+        job_id=sample_job_id,
+        status=JobStatus.COMPLETED.value,
+        progress=100,
+        message="Processing completed",
+        result_ready=True,
+        current_step="COMPLETE",
+    )
+    mock_handler.handle = AsyncMock(return_value=mock_result)
+
+    # Override dependency using FastAPI's dependency_overrides
+    async def override_handler():
+        return mock_handler
+
+    client.app.dependency_overrides[get_job_status_query_handler] = override_handler
+
+    try:
         # Act
         response = client.get(f"/api/jobs/{sample_job_id}/status")
 
-    # Assert
-    assert response.status_code == status.HTTP_200_OK
-    data = response.json()
-    assert "job_id" in data
-    assert "status" in data
-    assert "progress" in data
+        # Assert
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert "job_id" in data
+        assert "status" in data
+        assert "progress" in data
+    finally:
+        # Clean up
+        client.app.dependency_overrides.clear()
 
 
 def test_get_job_status_not_found(client):
@@ -85,18 +106,29 @@ def test_get_job_status_query_error(client, sample_job_id):
     - Returns 500 Internal Server Error
     """
     # Arrange
-    mock_query = MagicMock()
-    mock_query.execute.side_effect = Exception("Redis connection error")
+    from src.api.routers.jobs import get_job_status_query_handler
 
-    with patch("src.api.routers.jobs.GetJobStatusQuery", return_value=mock_query):
+    mock_handler = MagicMock()
+    mock_handler.handle = AsyncMock(side_effect=Exception("Redis connection error"))
+
+    # Override dependency using FastAPI's dependency_overrides
+    async def override_handler():
+        return mock_handler
+
+    client.app.dependency_overrides[get_job_status_query_handler] = override_handler
+
+    try:
         # Act
         response = client.get(f"/api/jobs/{sample_job_id}/status")
 
-    # Assert
-    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        # Assert
+        assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    finally:
+        # Clean up
+        client.app.dependency_overrides.clear()
 
 
-def test_get_job_status_cache_headers(client, mock_get_job_status_query, sample_job_id):
+def test_get_job_status_cache_headers(client, sample_job_id):
     """
     Test that status endpoint has correct cache headers.
 
@@ -104,17 +136,38 @@ def test_get_job_status_cache_headers(client, mock_get_job_status_query, sample_
     - Response has no-cache headers to prevent stale status
     """
     # Arrange
-    with patch(
-        "src.api.routers.jobs.GetJobStatusQuery",
-        return_value=mock_get_job_status_query,
-    ):
+    from src.application.queries.get_job_status import JobStatusResult
+    from src.application.models import JobStatus
+    from src.api.routers.jobs import get_job_status_query_handler
+
+    mock_handler = MagicMock()
+    mock_result = JobStatusResult(
+        job_id=sample_job_id,
+        status=JobStatus.PROCESSING.value,
+        progress=50,
+        message="Processing...",
+        result_ready=False,
+        current_step="MATCHING",
+    )
+    mock_handler.handle = AsyncMock(return_value=mock_result)
+
+    # Override dependency using FastAPI's dependency_overrides
+    async def override_handler():
+        return mock_handler
+
+    client.app.dependency_overrides[get_job_status_query_handler] = override_handler
+
+    try:
         # Act
         response = client.get(f"/api/jobs/{sample_job_id}/status")
 
-    # Assert
-    assert response.status_code == status.HTTP_200_OK
-    # Cache-Control header should prevent caching for real-time status
-    # Note: Actual header check depends on implementation
+        # Assert
+        assert response.status_code == status.HTTP_200_OK
+        # Cache-Control header should prevent caching for real-time status
+        # Note: Actual header check depends on implementation
+    finally:
+        # Clean up
+        client.app.dependency_overrides.clear()
 
 
 # ============================================================================
@@ -133,6 +186,7 @@ def test_get_job_status_with_ai_matching_enabled(client, sample_job_id):
     # Arrange
     from src.application.queries.get_job_status import JobStatusResult
     from src.application.models import JobStatus
+    from src.api.routers.jobs import get_job_status_query_handler
 
     mock_handler = MagicMock()
     mock_result = JobStatusResult(
@@ -146,20 +200,26 @@ def test_get_job_status_with_ai_matching_enabled(client, sample_job_id):
         using_ai=True,
         ai_model="paraphrase-multilingual-MiniLM-L12-v2",
     )
-    mock_handler.handle.return_value = mock_result
+    mock_handler.handle = AsyncMock(return_value=mock_result)
 
-    with patch(
-        "src.api.routers.jobs.get_job_status_query_handler",
-        return_value=mock_handler,
-    ):
+    # Override dependency using FastAPI's dependency_overrides
+    async def override_handler():
+        return mock_handler
+
+    client.app.dependency_overrides[get_job_status_query_handler] = override_handler
+
+    try:
         # Act
         response = client.get(f"/api/jobs/{sample_job_id}/status")
 
-    # Assert
-    assert response.status_code == status.HTTP_200_OK
-    data = response.json()
-    assert data["using_ai"] is True
-    assert data["ai_model"] == "paraphrase-multilingual-MiniLM-L12-v2"
+        # Assert
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["using_ai"] is True
+        assert data["ai_model"] == "paraphrase-multilingual-MiniLM-L12-v2"
+    finally:
+        # Clean up
+        client.app.dependency_overrides.clear()
 
 
 def test_get_job_status_with_ai_matching_disabled(client, sample_job_id):
@@ -173,6 +233,7 @@ def test_get_job_status_with_ai_matching_disabled(client, sample_job_id):
     # Arrange
     from src.application.queries.get_job_status import JobStatusResult
     from src.application.models import JobStatus
+    from src.api.routers.jobs import get_job_status_query_handler
 
     mock_handler = MagicMock()
     mock_result = JobStatusResult(
@@ -186,20 +247,26 @@ def test_get_job_status_with_ai_matching_disabled(client, sample_job_id):
         using_ai=False,
         ai_model=None,
     )
-    mock_handler.handle.return_value = mock_result
+    mock_handler.handle = AsyncMock(return_value=mock_result)
 
-    with patch(
-        "src.api.routers.jobs.get_job_status_query_handler",
-        return_value=mock_handler,
-    ):
+    # Override dependency using FastAPI's dependency_overrides
+    async def override_handler():
+        return mock_handler
+
+    client.app.dependency_overrides[get_job_status_query_handler] = override_handler
+
+    try:
         # Act
         response = client.get(f"/api/jobs/{sample_job_id}/status")
 
-    # Assert
-    assert response.status_code == status.HTTP_200_OK
-    data = response.json()
-    assert data["using_ai"] is False
-    assert data["ai_model"] is None
+        # Assert
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["using_ai"] is False
+        assert data["ai_model"] is None
+    finally:
+        # Clean up
+        client.app.dependency_overrides.clear()
 
 
 def test_get_job_status_backward_compatibility_ai_fields(client, sample_job_id):
@@ -213,6 +280,7 @@ def test_get_job_status_backward_compatibility_ai_fields(client, sample_job_id):
     # Arrange
     from src.application.queries.get_job_status import JobStatusResult
     from src.application.models import JobStatus
+    from src.api.routers.jobs import get_job_status_query_handler
 
     mock_handler = MagicMock()
     # Simulate old JobStatusResult without AI fields (defaults should apply)
@@ -223,25 +291,31 @@ def test_get_job_status_backward_compatibility_ai_fields(client, sample_job_id):
         message="Processing...",
         result_ready=False,
     )
-    mock_handler.handle.return_value = mock_result
+    mock_handler.handle = AsyncMock(return_value=mock_result)
 
-    with patch(
-        "src.api.routers.jobs.get_job_status_query_handler",
-        return_value=mock_handler,
-    ):
+    # Override dependency using FastAPI's dependency_overrides
+    async def override_handler():
+        return mock_handler
+
+    client.app.dependency_overrides[get_job_status_query_handler] = override_handler
+
+    try:
         # Act
         response = client.get(f"/api/jobs/{sample_job_id}/status")
 
-    # Assert
-    assert response.status_code == status.HTTP_200_OK
-    data = response.json()
-    # Old fields still present
-    assert "job_id" in data
-    assert "status" in data
-    assert "progress" in data
-    # New AI fields with defaults
-    assert data["using_ai"] is False  # Default value
-    assert data["ai_model"] is None  # Default value
+        # Assert
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        # Old fields still present
+        assert "job_id" in data
+        assert "status" in data
+        assert "progress" in data
+        # New AI fields with defaults
+        assert data["using_ai"] is False  # Default value
+        assert data["ai_model"] is None  # Default value
+    finally:
+        # Clean up
+        client.app.dependency_overrides.clear()
 
 
 # Summary: 8 tests covering (5 original + 3 Phase 4)

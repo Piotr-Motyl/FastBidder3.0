@@ -19,7 +19,7 @@ def test_upload_file_success(client, mock_file_upload_use_case):
     Test successful file upload.
 
     Verifies:
-    - Returns 200 OK
+    - Returns 201 Created
     - Response contains file_id, filename, size_mb, rows_count
     """
     # Arrange
@@ -37,7 +37,7 @@ def test_upload_file_success(client, mock_file_upload_use_case):
         )
 
     # Assert
-    assert response.status_code == status.HTTP_200_OK
+    assert response.status_code == status.HTTP_201_CREATED
     data = response.json()
     assert "file_id" in data
     assert "filename" in data
@@ -112,12 +112,14 @@ def test_upload_file_use_case_error(client):
     - Returns 500 Internal Server Error
     - Error message is included
     """
+    from unittest.mock import AsyncMock
+
     # Arrange
     file = io.BytesIO(b"PK\x03\x04" + b"\x00" * 100)
     file.name = "test.xlsx"
 
     mock_use_case = MagicMock()
-    mock_use_case.execute.side_effect = Exception("Database error")
+    mock_use_case.execute = AsyncMock(side_effect=Exception("Database error"))
 
     with patch("src.api.routers.files.FileUploadUseCase", return_value=mock_use_case):
         # Act
@@ -135,7 +137,7 @@ def test_upload_file_use_case_error(client):
 # ============================================================================
 
 
-def test_upload_file_with_file_type_reference(client, mock_file_upload_use_case):
+def test_upload_file_with_file_type_reference(client):
     """
     Test Phase 4: file_type parameter for reference files.
 
@@ -144,13 +146,33 @@ def test_upload_file_with_file_type_reference(client, mock_file_upload_use_case)
     - Response includes file_type="reference"
     - Response includes AI indexing fields (indexing_status, indexed_count)
     """
+    from unittest.mock import AsyncMock, MagicMock
+    from uuid import uuid4
+    from src.application.services.file_upload_use_case import FileUploadResult
+
     # Arrange
     file_content = b"PK\x03\x04" + b"\x00" * 100
     file = io.BytesIO(file_content)
     file.name = "catalog.xlsx"
 
+    # Create mock with file_type="reference"
+    mock_use_case = MagicMock()
+    mock_use_case.execute = AsyncMock(return_value=FileUploadResult(
+        file_id=str(uuid4()),
+        filename="catalog.xlsx",
+        size_mb=0.1,
+        sheets_count=1,
+        rows_count=50,
+        columns_count=5,
+        upload_time="2025-12-31T00:00:00",
+        preview=[],
+        file_type="reference",  # Phase 4: reference type
+        indexing_status=None,
+        indexed_count=None,
+    ))
+
     with patch(
-        "src.api.routers.files.FileUploadUseCase", return_value=mock_file_upload_use_case
+        "src.api.routers.files.FileUploadUseCase", return_value=mock_use_case
     ):
         # Act - upload as reference file
         response = client.post(
@@ -159,7 +181,7 @@ def test_upload_file_with_file_type_reference(client, mock_file_upload_use_case)
         )
 
     # Assert
-    assert response.status_code == status.HTTP_200_OK
+    assert response.status_code == status.HTTP_201_CREATED
     data = response.json()
     assert data["file_type"] == "reference"
     assert "indexing_status" in data  # Should be None initially
@@ -179,6 +201,7 @@ def test_upload_file_with_file_type_working(client, mock_file_upload_use_case):
     file = io.BytesIO(file_content)
     file.name = "enquiry.xlsx"
 
+    # mock_file_upload_use_case already has file_type="working" as default
     with patch(
         "src.api.routers.files.FileUploadUseCase", return_value=mock_file_upload_use_case
     ):
@@ -189,7 +212,7 @@ def test_upload_file_with_file_type_working(client, mock_file_upload_use_case):
         )
 
     # Assert
-    assert response.status_code == status.HTTP_200_OK
+    assert response.status_code == status.HTTP_201_CREATED
     data = response.json()
     assert data["file_type"] == "working"
 
@@ -218,7 +241,7 @@ def test_upload_file_backward_compatibility_no_file_type(client, mock_file_uploa
         )
 
     # Assert
-    assert response.status_code == status.HTTP_200_OK
+    assert response.status_code == status.HTTP_201_CREATED
     data = response.json()
     # Old fields still present
     assert "file_id" in data

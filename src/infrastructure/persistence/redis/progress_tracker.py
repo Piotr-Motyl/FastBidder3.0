@@ -164,8 +164,19 @@ class RedisProgressTracker:
         self.result_ttl: int = int(os.getenv("REDIS_RESULT_TTL", "86400"))  # 24h
 
         # Fallback configuration (Phase 2 - error recovery)
-        self.fallback_dir = Path(os.getenv("FALLBACK_DIR", "/tmp/fastbidder/fallback"))
-        self.fallback_dir.mkdir(parents=True, exist_ok=True)
+        # Use project directory for fallback storage instead of /tmp
+        default_fallback = Path(__file__).parent.parent.parent.parent / "data" / "fallback"
+        self.fallback_dir = Path(os.getenv("FALLBACK_DIR", str(default_fallback)))
+
+        # Try to create fallback directory, log warning if fails
+        try:
+            self.fallback_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Fallback directory initialized: {self.fallback_dir}")
+        except PermissionError as e:
+            logger.warning(
+                f"Cannot create fallback directory {self.fallback_dir}: {e}. "
+                "Fallback storage will not work. Set FALLBACK_DIR env variable to a writable path."
+            )
 
         # History configuration (Phase 2)
         self.max_history_entries: int = 10

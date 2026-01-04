@@ -15,7 +15,10 @@ Architecture Note:
 import os
 from datetime import datetime
 from celery import Celery
+from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
 
 # Create Celery instance with minimal config from environment
 celery_app = Celery(

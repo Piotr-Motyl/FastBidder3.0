@@ -8,14 +8,13 @@ Provides shared test utilities:
 """
 
 import io
-from pathlib import Path
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
-from src.api.main import app
+from src.api.main import create_app
 
 
 @pytest.fixture
@@ -25,6 +24,7 @@ def client():
 
     Returns TestClient configured with the FastAPI app.
     """
+    app = create_app()
     return TestClient(app)
 
 
@@ -56,27 +56,40 @@ def mock_excel_file():
 
 @pytest.fixture
 def mock_file_upload_use_case():
-    """Mock for FileUploadUseCase."""
+    """Mock for FileUploadUseCase (async)."""
+    from unittest.mock import AsyncMock
+    from src.application.services.file_upload_use_case import FileUploadResult
+
     mock = MagicMock()
-    mock.execute.return_value = {
-        "file_id": str(uuid4()),
-        "filename": "test.xlsx",
-        "size_mb": 0.5,
-        "rows_count": 100,
-        "upload_time": "2025-12-21T12:00:00",
-    }
+    mock.execute = AsyncMock(return_value=FileUploadResult(
+        file_id=str(uuid4()),
+        filename="test.xlsx",
+        size_mb=0.5,
+        sheets_count=1,
+        rows_count=100,
+        columns_count=10,
+        upload_time="2025-12-21T12:00:00",
+        preview=[],
+        file_type="working",  # Phase 4: default file type
+        indexing_status=None,  # Phase 4: AI indexing fields
+        indexed_count=None,
+    ))
     return mock
 
 
 @pytest.fixture
 def mock_process_matching_use_case():
-    """Mock for ProcessMatchingUseCase."""
+    """Mock for ProcessMatchingUseCase (async)."""
+    from unittest.mock import AsyncMock
+    from src.application.services.process_matching_use_case import ProcessMatchingResult
+
     mock = MagicMock()
-    mock.execute.return_value = {
-        "job_id": str(uuid4()),
-        "status": "queued",
-        "estimated_time_seconds": 30,
-    }
+    mock.execute = AsyncMock(return_value=ProcessMatchingResult(
+        job_id=str(uuid4()),
+        status="queued",
+        estimated_time=30,
+        message="Job queued successfully",
+    ))
     return mock
 
 

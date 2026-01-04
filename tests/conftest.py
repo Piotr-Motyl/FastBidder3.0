@@ -145,6 +145,62 @@ def docker_services():
     yield
 
 
+@pytest.fixture(scope="function")
+def clean_chromadb():
+    """
+    Clean ChromaDB vector database BEFORE each test.
+
+    Ensures test isolation by removing all ChromaDB data before test starts.
+    Does NOT clean after test - keeps data for debugging failed tests.
+
+    Critical for E2E tests that use ChromaDB for AI matching.
+
+    Scope: function (runs before each test)
+
+    Yields:
+        None
+
+    Examples:
+        >>> def test_matching_workflow(clean_chromadb, test_client):
+        ...     # ChromaDB is clean at start
+        ...     # Upload reference file -> indexed to ChromaDB
+        ...     # Test runs...
+        ...     # ChromaDB data REMAINS for debugging (not cleaned after)
+
+    Note:
+        - ChromaDB uses persistent storage in data/chroma_db/
+        - Without cleanup, old data from previous tests can cause conflicts
+        - This fixture ensures each test starts with a fresh vector database
+        - Does NOT clean after test to preserve debugging data
+        - Use 'make clean-chromadb' or 'make test-e2e' (auto-cleans) for manual cleanup
+        - For debugging: run 'make test-e2e-debug' then 'make inspect-chromadb'
+
+    Defense in depth:
+        - Primary cleanup: Makefile target 'make test-e2e' runs 'clean-chromadb' first
+        - Backup cleanup: This fixture cleans if developer runs pytest directly
+        - No teardown: Keeps data for post-mortem debugging of failed tests
+    """
+    from pathlib import Path
+    import shutil
+    from src.infrastructure.ai.vector_store.chroma_client import ChromaClientSingleton
+
+    chroma_dir = Path("data/chroma_db")
+
+    # CRITICAL: Reset singleton FIRST to release file locks and clear cache
+    ChromaClientSingleton.reset_instance()
+    logger.debug("ChromaDB singleton reset")
+
+    # Clean before test - simple directory removal (ignore errors for Windows locks)
+    if chroma_dir.exists():
+        shutil.rmtree(chroma_dir, ignore_errors=True)
+        logger.info("ChromaDB cleaned (before test)")
+
+    yield  # Test runs here
+
+    # NO teardown cleanup - keep data for debugging
+    # Developer can inspect ChromaDB after failed test using 'make inspect-chromadb'
+
+
 # ============================================================================
 # FASTAPI FIXTURES
 # ============================================================================

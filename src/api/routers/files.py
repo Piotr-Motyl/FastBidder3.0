@@ -28,6 +28,7 @@ Phase 2 Note:
 """
 
 import logging
+import os
 from typing import Any, Dict, Optional, Literal
 
 from fastapi import APIRouter, status, HTTPException, Depends, UploadFile, File, Query
@@ -216,8 +217,44 @@ async def get_file_upload_use_case():
     # Create FileStorageService instance
     file_storage = FileStorageService()
 
+    # Phase 4: Check if AI matching is enabled
+    use_ai_matching = os.getenv("USE_AI_MATCHING", "false").lower() == "true"
+    reference_indexer = None
+
+    if use_ai_matching:
+        try:
+            # Initialize AI components for reference file indexing
+            logger.info("USE_AI_MATCHING=true detected - initializing ReferenceIndexer")
+
+            from src.infrastructure.ai.embeddings.embedding_service import (
+                EmbeddingService,
+            )
+            from src.infrastructure.ai.vector_store.chroma_client import (
+                ChromaClientSingleton,
+            )
+            from src.infrastructure.ai.vector_store.reference_indexer import (
+                ReferenceIndexer,
+            )
+
+            # Initialize AI services
+            embedding_service = EmbeddingService()
+            chroma_client = ChromaClientSingleton.get_instance()
+
+            # Create ReferenceIndexer
+            reference_indexer = ReferenceIndexer(embedding_service, chroma_client)
+            logger.info("ReferenceIndexer initialized successfully")
+
+        except Exception as e:
+            # Log warning but don't fail - file upload will work without indexing
+            logger.warning(
+                f"Failed to initialize ReferenceIndexer (AI matching disabled): {e}"
+            )
+            reference_indexer = None
+    else:
+        logger.info("AI matching disabled (USE_AI_MATCHING=false) - ReferenceIndexer not initialized")
+
     # Create and return FileUploadUseCase with injected dependencies
-    return FileUploadUseCase(file_storage=file_storage)
+    return FileUploadUseCase(file_storage=file_storage, reference_indexer=reference_indexer)
 
 
 # ============================================================================
@@ -416,8 +453,10 @@ async def upload_file(
         # Read file data
         file_data = await file.read()
 
-        # Execute use case
-        result = await use_case.execute(file_data=file_data, filename=file.filename)
+        # Execute use case (Phase 4: pass file_type for AI indexing)
+        result = await use_case.execute(
+            file_data=file_data, filename=file.filename, file_type=file_type
+        )
 
         # Convert to response (Phase 4: include file_type for AI indexing)
         return UploadFileResponse(

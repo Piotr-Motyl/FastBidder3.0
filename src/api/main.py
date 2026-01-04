@@ -32,6 +32,10 @@ Does NOT contain:
 import logging
 import time
 from typing import Any, Dict
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse

@@ -28,6 +28,7 @@ htmlcov/
 .env
 *.db
 chroma_data/
+data/chroma_db/
 /tmp/
 
 # OS
