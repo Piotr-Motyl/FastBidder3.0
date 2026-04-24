@@ -9,7 +9,9 @@ Exports:
 """
 
 from .matching_engine import ConcreteMatchingEngine
+from .concrete_parameter_extractor import ConcreteParameterExtractor
 
 __all__ = [
     "ConcreteMatchingEngine",
+    "ConcreteParameterExtractor",
 ]

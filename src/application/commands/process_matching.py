@@ -28,10 +28,11 @@ Phase 2 Implementation:
 from typing import Any, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.application.models import MatchingStrategy, ReportFormat
 from src.domain.shared.exceptions import InvalidProcessMatchingCommandError
+from src.shared.utils.excel import excel_column_to_index, is_valid_excel_column
 
 
 # ============================================================================
@@ -269,11 +270,9 @@ class ProcessMatchingCommand(BaseModel):
     # Maximum rows per file (Phase 2 limit for happy path)
     MAX_ROWS_PER_FILE: int = 1000
 
-    class Config:
-        """Pydantic configuration."""
-
-        arbitrary_types_allowed = True
-        json_schema_extra = {
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        json_schema_extra={
             "example": {
                 "working_file": {
                     "file_id": "a3bb189e-8bf9-3888-9912-ace4e6543002",
@@ -292,7 +291,8 @@ class ProcessMatchingCommand(BaseModel):
                 "matching_strategy": "best_match",
                 "report_format": "simple",
             }
-        }
+        },
+    )
 
     @classmethod
     def from_api_request(cls, request: dict) -> "ProcessMatchingCommand":
@@ -304,7 +304,7 @@ class ProcessMatchingCommand(BaseModel):
         Converts string enum values to proper Enum types.
 
         Args:
-            request: Dict from ProcessMatchingRequest.dict()
+            request: Dict from ProcessMatchingRequest.model_dump()
 
         Returns:
             ProcessMatchingCommand ready for validation and use case execution
@@ -514,18 +514,7 @@ class ProcessMatchingCommand(BaseModel):
             - Accepts uppercase only (lowercase normalization in later phases)
             - Limited to A-ZZ for happy path (extended range in later phases)
         """
-        if not column:
-            return False
-
-        # Must be 1-2 characters
-        if len(column) > 2:
-            return False
-
-        # All characters must be uppercase letters
-        if not column.isalpha() or not column.isupper():
-            return False
-
-        return True
+        return is_valid_excel_column(column)
 
     @staticmethod
     def column_to_index(column: str) -> int:
@@ -565,19 +554,4 @@ class ProcessMatchingCommand(BaseModel):
             - Command keeps columns as strings (user-facing format)
             - Actual conversion happens in Infrastructure during Excel read
         """
-        if not ProcessMatchingCommand._is_valid_excel_column(column):
-            raise ValueError(
-                f"Invalid Excel column format: '{column}'. Must be A-ZZ range."
-            )
-
-        # Convert column letters to 0-based index
-        # A=0, B=1, ..., Z=25, AA=26, AB=27, ..., ZZ=701
-        index = 0
-        for i, char in enumerate(reversed(column)):
-            # char value: A=1, B=2, ..., Z=26
-            char_value = ord(char) - ord("A") + 1
-            # Position multiplier: 1st position (from right) = 1, 2nd = 26
-            index += char_value * (26**i)
-
-        # Convert to 0-based (Excel A=1, we want A=0)
-        return index - 1
+        return excel_column_to_index(column)

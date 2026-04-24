@@ -52,10 +52,18 @@ def mock_file_storage():
 
 
 @pytest.fixture
-def use_case(mock_celery_app, mock_file_storage):
+def mock_progress_tracker():
+    """Create mock ProgressTracker."""
+    return MagicMock()
+
+
+@pytest.fixture
+def use_case(mock_celery_app, mock_file_storage, mock_progress_tracker):
     """Create ProcessMatchingUseCase with mocked dependencies."""
     return ProcessMatchingUseCase(
-        celery_app=mock_celery_app, file_storage=mock_file_storage
+        celery_app=mock_celery_app,
+        file_storage=mock_file_storage,
+        progress_tracker=mock_progress_tracker,
     )
 
 
@@ -181,7 +189,6 @@ async def test_execute_estimates_processing_time(
     # Mock metadata extraction
     mock_file_storage.extract_file_metadata.return_value = {"rows_count": 100}
 
-    # Mock Celery task
     with patch(
         "src.application.services.process_matching_use_case.process_matching_task"
     ) as mock_task:
@@ -189,17 +196,10 @@ async def test_execute_estimates_processing_time(
         mock_task_result.id = str(uuid4())
         mock_task.apply_async.return_value = mock_task_result
 
-        # Mock RedisProgressTracker
-        with patch(
-            "src.application.services.process_matching_use_case.RedisProgressTracker"
-        ) as mock_tracker_class:
-            mock_tracker = MagicMock()
-            mock_tracker_class.return_value = mock_tracker
+        result = await use_case.execute(valid_command)
 
-            result = await use_case.execute(valid_command)
-
-            # Estimated time should be 100 * 0.1 = 10 seconds (min is 10s)
-            assert result.estimated_time == 10
+        # Estimated time should be 100 * 0.1 = 10 seconds (min is 10s)
+        assert result.estimated_time == 10
 
 
 @pytest.mark.asyncio
@@ -219,16 +219,10 @@ async def test_execute_applies_min_estimation_bound(
         mock_task_result.id = str(uuid4())
         mock_task.apply_async.return_value = mock_task_result
 
-        with patch(
-            "src.application.services.process_matching_use_case.RedisProgressTracker"
-        ) as mock_tracker_class:
-            mock_tracker = MagicMock()
-            mock_tracker_class.return_value = mock_tracker
+        result = await use_case.execute(valid_command)
 
-            result = await use_case.execute(valid_command)
-
-            # Should be minimum 10 seconds
-            assert result.estimated_time == 10
+        # Should be minimum 10 seconds
+        assert result.estimated_time == 10
 
 
 @pytest.mark.asyncio
@@ -248,23 +242,17 @@ async def test_execute_applies_max_estimation_bound(
         mock_task_result.id = str(uuid4())
         mock_task.apply_async.return_value = mock_task_result
 
-        with patch(
-            "src.application.services.process_matching_use_case.RedisProgressTracker"
-        ) as mock_tracker_class:
-            mock_tracker = MagicMock()
-            mock_tracker_class.return_value = mock_tracker
+        result = await use_case.execute(valid_command)
 
-            result = await use_case.execute(valid_command)
-
-            # Should be maximum 300 seconds
-            assert result.estimated_time == 300
+        # Should be maximum 300 seconds
+        assert result.estimated_time == 300
 
 
 @pytest.mark.asyncio
 async def test_execute_initializes_job_in_redis(
-    use_case, valid_command, mock_file_storage, temp_upload_dir
+    use_case, valid_command, mock_file_storage, mock_progress_tracker, temp_upload_dir
 ):
-    """Test execute() initializes job in Redis before triggering Celery."""
+    """Test execute() initializes job in progress tracker before triggering Celery."""
     mock_file_storage.get_uploaded_file_path.return_value = temp_upload_dir
     mock_file_storage.extract_file_metadata.return_value = {"rows_count": 100}
 
@@ -275,18 +263,10 @@ async def test_execute_initializes_job_in_redis(
         mock_task_result.id = str(uuid4())
         mock_task.apply_async.return_value = mock_task_result
 
-        with patch(
-            "src.application.services.process_matching_use_case.RedisProgressTracker"
-        ) as mock_tracker_class:
-            mock_tracker = MagicMock()
-            mock_tracker_class.return_value = mock_tracker
+        await use_case.execute(valid_command)
 
-            result = await use_case.execute(valid_command)
-
-            # Verify Redis tracker was initialized
-            mock_tracker_class.assert_called_once()
-            # Verify start_job was called
-            mock_tracker.start_job.assert_called_once()
+        # Verify start_job was called on the injected tracker
+        mock_progress_tracker.start_job.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -305,24 +285,18 @@ async def test_execute_triggers_celery_task(
         mock_task_result.id = job_id
         mock_task.apply_async.return_value = mock_task_result
 
-        with patch(
-            "src.application.services.process_matching_use_case.RedisProgressTracker"
-        ) as mock_tracker_class:
-            mock_tracker = MagicMock()
-            mock_tracker_class.return_value = mock_tracker
+        result = await use_case.execute(valid_command)
 
-            result = await use_case.execute(valid_command)
+        # Verify Celery task was triggered
+        mock_task.apply_async.assert_called_once()
 
-            # Verify Celery task was triggered
-            mock_task.apply_async.assert_called_once()
-
-            # Verify task was called with command data
-            call_kwargs = mock_task.apply_async.call_args[1]
-            assert "kwargs" in call_kwargs
-            celery_data = call_kwargs["kwargs"]
-            assert "working_file" in celery_data
-            assert "reference_file" in celery_data
-            assert "matching_threshold" in celery_data
+        # Verify task was called with command data
+        call_kwargs = mock_task.apply_async.call_args[1]
+        assert "kwargs" in call_kwargs
+        celery_data = call_kwargs["kwargs"]
+        assert "working_file" in celery_data
+        assert "reference_file" in celery_data
+        assert "matching_threshold" in celery_data
 
 
 @pytest.mark.asyncio
@@ -340,19 +314,13 @@ async def test_execute_uses_custom_task_id(
         mock_task_result.id = str(uuid4())
         mock_task.apply_async.return_value = mock_task_result
 
-        with patch(
-            "src.application.services.process_matching_use_case.RedisProgressTracker"
-        ) as mock_tracker_class:
-            mock_tracker = MagicMock()
-            mock_tracker_class.return_value = mock_tracker
+        result = await use_case.execute(valid_command)
 
-            result = await use_case.execute(valid_command)
-
-            # Verify task_id was set in apply_async
-            call_kwargs = mock_task.apply_async.call_args[1]
-            assert "task_id" in call_kwargs
-            # task_id should match result.job_id
-            assert UUID(call_kwargs["task_id"]) == result.job_id
+        # Verify task_id was set in apply_async
+        call_kwargs = mock_task.apply_async.call_args[1]
+        assert "task_id" in call_kwargs
+        # task_id should match result.job_id
+        assert UUID(call_kwargs["task_id"]) == result.job_id
 
 
 @pytest.mark.asyncio
@@ -371,21 +339,13 @@ async def test_execute_returns_result_with_job_metadata(
         mock_task_result.id = job_id
         mock_task.apply_async.return_value = mock_task_result
 
-        with patch(
-            "src.application.services.process_matching_use_case.RedisProgressTracker"
-        ) as mock_tracker_class:
-            mock_tracker = MagicMock()
-            mock_tracker_class.return_value = mock_tracker
+        result = await use_case.execute(valid_command)
 
-            result = await use_case.execute(valid_command)
-
-            # Verify result structure
-            assert isinstance(result, ProcessMatchingResult)
-            # Result.job_id comes from the generated UUID, not from mock
-            # Verify it's a valid UUID by checking it's in the message
-            assert str(result.job_id) in result.message
-            assert result.status == JobStatus.QUEUED
-            assert result.estimated_time == 20  # 200 rows * 0.1 = 20s
+        # Verify result structure
+        assert isinstance(result, ProcessMatchingResult)
+        assert str(result.job_id) in result.message
+        assert result.status == JobStatus.QUEUED
+        assert result.estimated_time == 20  # 200 rows * 0.1 = 20s
 
 
 @pytest.mark.asyncio
@@ -393,7 +353,7 @@ async def test_execute_works_without_file_storage(valid_command):
     """Test execute() works with file_storage=None (fallback to default estimation)."""
     mock_celery_app = MagicMock()
     use_case_no_storage = ProcessMatchingUseCase(
-        celery_app=mock_celery_app, file_storage=None
+        celery_app=mock_celery_app, file_storage=None, progress_tracker=None
     )
 
     with patch(
@@ -403,16 +363,10 @@ async def test_execute_works_without_file_storage(valid_command):
         mock_task_result.id = str(uuid4())
         mock_task.apply_async.return_value = mock_task_result
 
-        with patch(
-            "src.application.services.process_matching_use_case.RedisProgressTracker"
-        ) as mock_tracker_class:
-            mock_tracker = MagicMock()
-            mock_tracker_class.return_value = mock_tracker
+        result = await use_case_no_storage.execute(valid_command)
 
-            result = await use_case_no_storage.execute(valid_command)
-
-            # Should use default estimation of 30 seconds
-            assert result.estimated_time == 30
+        # Should use default estimation of 30 seconds
+        assert result.estimated_time == 30
 
 
 # ============================================================================
@@ -476,10 +430,9 @@ async def test_execute_raises_when_no_xlsx_file_in_directory(
 
 @pytest.mark.asyncio
 async def test_full_execution_flow_happy_path(
-    use_case, valid_command, mock_file_storage, temp_upload_dir
+    use_case, valid_command, mock_file_storage, mock_progress_tracker, temp_upload_dir
 ):
     """Integration test: Full execution flow from command to result."""
-    # Setup mocks
     mock_file_storage.get_uploaded_file_path.return_value = temp_upload_dir
     mock_file_storage.extract_file_metadata.return_value = {"rows_count": 150}
 
@@ -491,33 +444,23 @@ async def test_full_execution_flow_happy_path(
         mock_task_result.id = job_id
         mock_task.apply_async.return_value = mock_task_result
 
-        with patch(
-            "src.application.services.process_matching_use_case.RedisProgressTracker"
-        ) as mock_tracker_class:
-            mock_tracker = MagicMock()
-            mock_tracker_class.return_value = mock_tracker
+        result = await use_case.execute(valid_command)
 
-            # Execute
-            result = await use_case.execute(valid_command)
+        # 1. Files validated (working + reference in _validate_files)
+        # 2. Working file path retrieved again in _estimate_processing_time
+        assert mock_file_storage.get_uploaded_file_path.call_count == 3
 
-            # Verify complete flow
-            # 1. Command validated (no exception)
-            # 2. Files validated (working + reference in _validate_files)
-            # 3. Working file path retrieved again in _estimate_processing_time
-            assert mock_file_storage.get_uploaded_file_path.call_count == 3
+        # 3. Metadata extracted
+        mock_file_storage.extract_file_metadata.assert_called_once()
 
-            # 4. Metadata extracted
-            mock_file_storage.extract_file_metadata.assert_called_once()
+        # 4. Progress tracker initialized
+        mock_progress_tracker.start_job.assert_called_once()
 
-            # 4. Redis initialized
-            mock_tracker.start_job.assert_called_once()
+        # 5. Celery task triggered
+        mock_task.apply_async.assert_called_once()
 
-            # 5. Celery task triggered
-            mock_task.apply_async.assert_called_once()
-
-            # 6. Result returned with valid job_id
-            # job_id is generated internally, not from mock
-            assert isinstance(result.job_id, UUID)
-            assert result.status == JobStatus.QUEUED
-            assert result.estimated_time == 15  # 150 * 0.1 = 15s
-            assert str(result.job_id) in result.message
+        # 6. Result returned with valid job_id
+        assert isinstance(result.job_id, UUID)
+        assert result.status == JobStatus.QUEUED
+        assert result.estimated_time == 15  # 150 * 0.1 = 15s
+        assert str(result.job_id) in result.message

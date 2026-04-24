@@ -1,6 +1,6 @@
 # FastBidder 3.0
 
-> 🚀 AI-powered HVAC product matching system with hybrid parameter + semantic search
+> 🚀 AI-powered HVAC product semantic retrieval system matching with hybrid parameter + semantic matching
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com/)
@@ -220,7 +220,7 @@ FastBidder uses a **hybrid matching algorithm** combining parameter-based and se
            │
     ┌──────▼──────────────────────────────┐
     │  2. For each reference item:        │
-    │                                      │
+    │                                     │
     │  ┌────────────────────────────────┐ │
     │  │ A. Parameter Matching (40%)    │ │
     │  │    - DN: Exact match → 100%    │ │
@@ -228,14 +228,14 @@ FastBidder uses a **hybrid matching algorithm** combining parameter-based and se
     │  │    - Material: Fuzzy → 0-100%  │ │
     │  │    Average → param_score       │ │
     │  └────────────────────────────────┘ │
-    │                                      │
+    │                                     │
     │  ┌────────────────────────────────┐ │
     │  │ B. Semantic Matching (60%)     │ │
     │  │    - Embeddings (transformers) │ │
     │  │    - Cosine similarity         │ │
     │  │    → semantic_score            │ │
     │  └────────────────────────────────┘ │
-    │                                      │
+    │                                     │
     │  ┌────────────────────────────────┐ │
     │  │ C. Combine Scores              │ │
     │  │ final = 0.4×param + 0.6×sem    │ │

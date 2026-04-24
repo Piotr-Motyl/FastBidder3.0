@@ -32,6 +32,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+import numpy as np
+
 from src.domain.hvac.entities.hvac_description import HVACDescription
 from src.domain.hvac.value_objects.match_result import MatchResult
 from src.domain.hvac.value_objects.extracted_parameters import ExtractedParameters
@@ -601,8 +603,6 @@ class SimpleMatchingEngine:
 
         # Calculate cosine similarity
         try:
-            import numpy as np
-
             # Convert to numpy arrays for efficient computation
             source_vec = np.array(source_embedding)
             reference_vec = np.array(reference_embedding)

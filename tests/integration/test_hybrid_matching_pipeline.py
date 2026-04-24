@@ -22,7 +22,7 @@ from src.infrastructure.ai.vector_store.reference_indexer import ReferenceIndexe
 from src.infrastructure.ai.retrieval.semantic_retriever import SemanticRetriever
 from src.infrastructure.matching.hybrid_matching_engine import HybridMatchingEngine
 from src.domain.hvac.services.simple_matching_engine import SimpleMatchingEngine
-from src.domain.hvac.services.concrete_parameter_extractor import (
+from src.infrastructure.matching.concrete_parameter_extractor import (
     ConcreteParameterExtractor,
 )
 from src.domain.hvac.entities.hvac_description import HVACDescription

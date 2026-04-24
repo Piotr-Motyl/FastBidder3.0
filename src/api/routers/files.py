@@ -32,7 +32,7 @@ import os
 from typing import Any, Dict, Optional, Literal
 
 from fastapi import APIRouter, status, HTTPException, Depends, UploadFile, File, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # Import Application Layer use case
 from src.application.services.file_upload_use_case import FileUploadUseCase
@@ -127,8 +127,8 @@ class UploadFileResponse(BaseModel):
         description="Number of items indexed in vector DB - Phase 4",
     )
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "file_id": "a3bb189e-8bf9-3888-9912-ace4e6543002",
                 "filename": "my_catalog_2024.xlsx",
@@ -160,6 +160,7 @@ class UploadFileResponse(BaseModel):
                 "indexed_count": 150,
             }
         }
+    )
 
 
 # ============================================================================
@@ -411,7 +412,7 @@ async def upload_file(
     #             code="INVALID_FILE_EXTENSION",
     #             message=str(e),
     #             details={"filename": file.filename}
-    #         ).dict()
+    #         ).model_dump()
     #     )
     #
     # except FileSizeExceededError as e:
@@ -422,7 +423,7 @@ async def upload_file(
     #             code="FILE_TOO_LARGE",
     #             message=str(e),
     #             details={"filename": file.filename, "max_size_mb": 10}
-    #         ).dict()
+    #         ).model_dump()
     #     )
     #
     # except ExcelParsingError as e:
@@ -433,7 +434,7 @@ async def upload_file(
     #             code="EXCEL_PARSING_ERROR",
     #             message=str(e),
     #             details={"filename": file.filename}
-    #         ).dict()
+    #         ).model_dump()
     #     )
     #
     # except Exception as e:
@@ -445,7 +446,7 @@ async def upload_file(
     #             code="INTERNAL_SERVER_ERROR",
     #             message="An unexpected error occurred during file upload",
     #             details={"error": str(e)}
-    #         ).dict()
+    #         ).model_dump()
     #     )
 
     # Implementation based on Phase 2 contract

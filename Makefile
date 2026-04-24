@@ -1,7 +1,20 @@
 # FastBidder - Makefile
 # Development and Docker commands
 
-.PHONY: help setup-dev setup-system setup-temp-dirs install check-services run test test-all test-unit test-integration test-e2e test-e2e-debug test-ci evaluate lint format clean-chromadb inspect-chromadb docker-up docker-down docker-logs docker-restart docker-test docker-health celery-worker celery-flower
+.PHONY: help setup-dev setup-system setup-temp-dirs install check-services run test test-all test-unit test-integration test-e2e test-e2e-debug test-ci evaluate lint format clean-chromadb inspect-chromadb clean-logs docker-up docker-down docker-logs docker-restart docker-test docker-health celery-worker celery-flower
+
+# ----------------------------------------------------------------------------
+# Logging configuration for tests and Celery worker
+# ----------------------------------------------------------------------------
+# Centralized log directory structure:
+#   logs/tests/{type}_YYYYMMDD_HHMMSS.log   - pytest outputs per test type
+#   logs/celery/celery_YYYYMMDD_HHMMSS.log  - Celery worker stdout/stderr
+# Retention: 10 newest files per prefix (older files auto-deleted)
+# Manual cleanup: make clean-logs
+# ----------------------------------------------------------------------------
+LOG_DIR_TESTS := logs/tests
+LOG_DIR_CELERY := logs/celery
+LOG_RETENTION := 10
 
 # Display help
 help:
@@ -25,6 +38,7 @@ help:
 	@echo "Debugging & Cleanup:"
 	@echo "  make clean-chromadb    - Clean ChromaDB vector database"
 	@echo "  make inspect-chromadb  - Inspect ChromaDB contents (after failed test)"
+	@echo "  make clean-logs        - Remove all log files in logs/tests/ and logs/celery/"
 	@echo ""
 	@echo "Local Development:"
 	@echo "  make install           - Install dependencies with Poetry"
@@ -98,23 +112,50 @@ run:
 	poetry run uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
 
 # Run all tests (alias for test-all)
-test:
-	poetry run pytest -v --cov=src --cov-report=term-missing
+test: test-all
 
 # Run all tests (unit + integration + E2E)
+# Logs to: logs/tests/all_YYYYMMDD_HHMMSS.log (DEBUG level for post-run analysis)
 test-all:
-	poetry run pytest -v --cov=src --cov-report=term-missing
+	@mkdir -p $(LOG_DIR_TESTS)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	LOG_FILE="$(LOG_DIR_TESTS)/all_$${TIMESTAMP}.log"; \
+	echo "📝 Test log: $$LOG_FILE"; \
+	poetry run pytest -v --cov=src --cov-report=term-missing \
+		--log-file="$$LOG_FILE"; \
+	STATUS=$$?; \
+	ls -t $(LOG_DIR_TESTS)/all_*.log 2>/dev/null | tail -n +$$(($(LOG_RETENTION)+1)) | xargs -r rm -f; \
+	exit $$STATUS
 
 # Run only unit tests (fast, no Docker needed)
+# Logs to: logs/tests/unit_YYYYMMDD_HHMMSS.log
 test-unit:
-	poetry run pytest tests/unit/ -v --cov=src --cov-report=term-missing
+	@mkdir -p $(LOG_DIR_TESTS)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	LOG_FILE="$(LOG_DIR_TESTS)/unit_$${TIMESTAMP}.log"; \
+	echo "📝 Test log: $$LOG_FILE"; \
+	poetry run pytest tests/unit/ -v --cov=src --cov-report=term-missing \
+		--log-file="$$LOG_FILE"; \
+	STATUS=$$?; \
+	ls -t $(LOG_DIR_TESTS)/unit_*.log 2>/dev/null | tail -n +$$(($(LOG_RETENTION)+1)) | xargs -r rm -f; \
+	exit $$STATUS
 
 # Run only integration tests (requires Docker: Redis + ChromaDB)
+# Logs to: logs/tests/integration_YYYYMMDD_HHMMSS.log
 test-integration:
-	poetry run pytest tests/integration/ -v -m integration
+	@mkdir -p $(LOG_DIR_TESTS)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	LOG_FILE="$(LOG_DIR_TESTS)/integration_$${TIMESTAMP}.log"; \
+	echo "📝 Test log: $$LOG_FILE"; \
+	poetry run pytest tests/integration/ -v -m integration \
+		--log-file="$$LOG_FILE"; \
+	STATUS=$$?; \
+	ls -t $(LOG_DIR_TESTS)/integration_*.log 2>/dev/null | tail -n +$$(($(LOG_RETENTION)+1)) | xargs -r rm -f; \
+	exit $$STATUS
 
 # Run only E2E tests (requires Docker: Redis + Celery worker)
 # Cleans ChromaDB BEFORE tests to ensure deterministic state
+# Logs to: logs/tests/e2e_YYYYMMDD_HHMMSS.log (most important for matching tuning)
 test-e2e: clean-chromadb
 	@echo "Preparing environment for E2E tests..."
 	@$(MAKE) setup-temp-dirs
@@ -122,11 +163,22 @@ test-e2e: clean-chromadb
 	@echo "Checking if required services are running..."
 	@$(MAKE) check-services
 	@echo ""
-	@echo "Running E2E tests..."
-	poetry run pytest tests/e2e/ -v -m e2e
+	@mkdir -p $(LOG_DIR_TESTS)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	LOG_FILE="$(LOG_DIR_TESTS)/e2e_$${TIMESTAMP}.log"; \
+	echo "📝 Test log: $$LOG_FILE"; \
+	echo "💡 For matching tuning, also check latest logs/celery/celery_*.log"; \
+	echo ""; \
+	echo "Running E2E tests..."; \
+	poetry run pytest tests/e2e/ -v -m e2e \
+		--log-file="$$LOG_FILE"; \
+	STATUS=$$?; \
+	ls -t $(LOG_DIR_TESTS)/e2e_*.log 2>/dev/null | tail -n +$$(($(LOG_RETENTION)+1)) | xargs -r rm -f; \
+	exit $$STATUS
 
 # Run E2E tests WITHOUT cleaning ChromaDB (for debugging failed tests)
 # Allows inspection of ChromaDB data after test failure
+# Logs to: logs/tests/e2e_debug_YYYYMMDD_HHMMSS.log
 test-e2e-debug:
 	@echo "🐛 Running E2E tests in DEBUG mode (keeping ChromaDB data)..."
 	@echo "Note: ChromaDB will NOT be cleaned before or after tests"
@@ -136,11 +188,28 @@ test-e2e-debug:
 	@echo ""
 	@$(MAKE) check-services
 	@echo ""
-	poetry run pytest tests/e2e/ -v -m e2e -s
+	@mkdir -p $(LOG_DIR_TESTS)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	LOG_FILE="$(LOG_DIR_TESTS)/e2e_debug_$${TIMESTAMP}.log"; \
+	echo "📝 Test log: $$LOG_FILE"; \
+	poetry run pytest tests/e2e/ -v -m e2e -s \
+		--log-file="$$LOG_FILE"; \
+	STATUS=$$?; \
+	ls -t $(LOG_DIR_TESTS)/e2e_debug_*.log 2>/dev/null | tail -n +$$(($(LOG_RETENTION)+1)) | xargs -r rm -f; \
+	exit $$STATUS
 
 # CI/CD: Run all tests with strict mode (coverage threshold, skip slow tests)
+# Logs to: logs/tests/ci_YYYYMMDD_HHMMSS.log
 test-ci:
-	poetry run pytest -v --cov=src --cov-report=xml --cov-fail-under=80 -m "not slow"
+	@mkdir -p $(LOG_DIR_TESTS)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	LOG_FILE="$(LOG_DIR_TESTS)/ci_$${TIMESTAMP}.log"; \
+	echo "📝 Test log: $$LOG_FILE"; \
+	poetry run pytest -v --cov=src --cov-report=xml --cov-fail-under=80 -m "not slow" \
+		--log-file="$$LOG_FILE"; \
+	STATUS=$$?; \
+	ls -t $(LOG_DIR_TESTS)/ci_*.log 2>/dev/null | tail -n +$$(($(LOG_RETENTION)+1)) | xargs -r rm -f; \
+	exit $$STATUS
 
 # Run matching quality evaluation with golden dataset
 evaluate:
@@ -197,11 +266,29 @@ else: \
     print('\\nWARNING: No documents in database'); \
 "
 
+# Run Celery worker locally (foreground process)
+# Captures stdout+stderr to logs/celery/celery_YYYYMMDD_HHMMSS.log via tee
+# Log is visible in terminal AND written to file simultaneously
 celery-worker:
-	poetry run celery -A src.application.tasks.celery_app worker --loglevel=info
+	@mkdir -p $(LOG_DIR_CELERY)
+	@ls -t $(LOG_DIR_CELERY)/celery_*.log 2>/dev/null | tail -n +$$(($(LOG_RETENTION)+1)) | xargs -r rm -f
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	LOG_FILE="$(LOG_DIR_CELERY)/celery_$${TIMESTAMP}.log"; \
+	echo "📝 Celery log: $$LOG_FILE"; \
+	echo "💡 Log is also written to file — use 'cat $$LOG_FILE' to review"; \
+	echo ""; \
+	poetry run celery -A src.application.tasks.celery_app worker --loglevel=info 2>&1 | tee "$$LOG_FILE"
 
 celery-flower:
 	poetry run celery -A src.application.tasks.celery_app flower --port=5555
+
+# Clean all log files (tests + celery)
+# Use when you want a fresh slate — retention rotation keeps 10 files automatically
+clean-logs:
+	@echo "🧹 Cleaning log files..."
+	@rm -f $(LOG_DIR_TESTS)/*.log 2>/dev/null || true
+	@rm -f $(LOG_DIR_CELERY)/*.log 2>/dev/null || true
+	@echo "✓ All logs removed from $(LOG_DIR_TESTS)/ and $(LOG_DIR_CELERY)/"
 
 # Docker Commands
 docker-up:

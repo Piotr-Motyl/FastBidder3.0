@@ -19,7 +19,7 @@ import logging
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.application.models import JobStatus
 
@@ -37,6 +37,8 @@ class GetJobStatusQuery(BaseModel):
     Attributes:
         job_id: Celery task ID to query status for
     """
+
+    model_config = ConfigDict(frozen=True)
 
     job_id: UUID = Field(description="Celery task ID returned from matching process")
 
@@ -100,16 +102,12 @@ class GetJobStatusQueryHandler:
         result = await handler.handle(query)
     """
 
-    def __init__(self, progress_tracker=None):
+    def __init__(self, progress_tracker):
         """
         Initialize with dependencies.
 
         Args:
-            progress_tracker: RedisProgressTracker instance (injected)
-
-        Note:
-            Phase 3 will inject actual RedisProgressTracker.
-            For now, accepts None for contract phase.
+            progress_tracker: RedisProgressTracker instance (required, injected)
         """
         self.progress_tracker = progress_tracker
 
@@ -267,8 +265,6 @@ class GetJobStatusQueryHandler:
         logger.debug(f"Retrieving status for job: {job_id_str}")
 
         # Step 2: Fetch from Redis via progress_tracker
-        if self.progress_tracker is None:
-            raise RuntimeError("RedisProgressTracker not initialized")
         progress_data = self.progress_tracker.get_status(job_id_str)
 
         # Step 3: Check if exists
@@ -284,7 +280,7 @@ class GetJobStatusQueryHandler:
         # Step 4: Convert status string to enum
         try:
             status_enum = JobStatus(progress_data["status"])
-        except ValueError as e:
+        except ValueError:
             logger.error(f"Invalid status value from Redis: {progress_data['status']}")
             raise ValueError(f"Invalid status in Redis: {progress_data['status']}")
 

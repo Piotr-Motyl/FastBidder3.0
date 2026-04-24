@@ -222,7 +222,7 @@ async def domain_exception_handler(request: Request, exc: DomainException):
 
     return JSONResponse(
         status_code=status_code,
-        content=error_response.dict(),
+        content=error_response.model_dump(),
     )
 
 
@@ -251,7 +251,7 @@ async def job_not_found_exception_handler(request: Request, exc: JobNotFoundExce
 
     return JSONResponse(
         status_code=status.HTTP_404_NOT_FOUND,
-        content=error_response.dict(),
+        content=error_response.model_dump(),
     )
 
 
@@ -287,7 +287,7 @@ async def generic_exception_handler(request: Request, exc: Exception):
 
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content=error_response.dict(),
+        content=error_response.model_dump(),
     )
 
 

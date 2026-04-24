@@ -5,7 +5,7 @@ Covers: parameter extraction methods, dictionary matching, confidence scoring, i
 
 import pytest
 
-from src.domain.hvac.services.concrete_parameter_extractor import (
+from src.infrastructure.matching.concrete_parameter_extractor import (
     ConcreteParameterExtractor,
 )
 from src.domain.hvac.value_objects.extracted_parameters import ExtractedParameters

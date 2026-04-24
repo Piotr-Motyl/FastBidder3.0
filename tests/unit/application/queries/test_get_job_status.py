@@ -198,11 +198,10 @@ def test_handler_initializes_with_progress_tracker(mock_progress_tracker):
     assert handler.progress_tracker == mock_progress_tracker
 
 
-def test_handler_initializes_with_none_tracker():
-    """Test GetJobStatusQueryHandler allows None tracker (for testing)."""
-    handler = GetJobStatusQueryHandler(progress_tracker=None)
-
-    assert handler.progress_tracker is None
+def test_handler_requires_progress_tracker():
+    """Test GetJobStatusQueryHandler requires progress_tracker argument."""
+    with pytest.raises(TypeError):
+        GetJobStatusQueryHandler()  # type: ignore[call-arg]
 
 
 # ============================================================================
@@ -355,16 +354,6 @@ async def test_handle_raises_job_not_found_when_redis_returns_none(
 
     with pytest.raises(JobNotFoundException, match=str(sample_job_id)):
         await handler.handle(query)
-
-
-@pytest.mark.asyncio
-async def test_handle_raises_when_tracker_is_none(sample_job_id):
-    """Test handle() raises RuntimeError when progress_tracker is None."""
-    handler_no_tracker = GetJobStatusQueryHandler(progress_tracker=None)
-    query = GetJobStatusQuery(job_id=sample_job_id)
-
-    with pytest.raises(RuntimeError, match="RedisProgressTracker not initialized"):
-        await handler_no_tracker.handle(query)
 
 
 @pytest.mark.asyncio

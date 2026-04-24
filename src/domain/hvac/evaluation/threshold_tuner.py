@@ -522,7 +522,7 @@ if __name__ == "__main__":
             from src.infrastructure.matching.hybrid_matching_engine import (
                 HybridMatchingEngine,
             )
-            from src.domain.hvac.services.concrete_parameter_extractor import (
+            from src.infrastructure.matching.concrete_parameter_extractor import (
                 ConcreteParameterExtractor,
             )
             from src.domain.hvac.services.simple_matching_engine import (

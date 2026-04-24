@@ -35,7 +35,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, status, HTTPException, Path, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # Import shared models - now from Application Layer (correct dependency direction)
 from src.application.queries.get_job_status import (
@@ -113,10 +113,8 @@ class JobStatusResponse(BaseModel):
         description="AI model name if AI enabled (e.g., 'paraphrase-multilingual-MiniLM-L12-v2') - Phase 4",
     )
 
-    class Config:
-        """Pydantic configuration."""
-
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "job_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
                 "status": "processing",
@@ -131,6 +129,7 @@ class JobStatusResponse(BaseModel):
                 "ai_model": "paraphrase-multilingual-MiniLM-L12-v2",
             }
         }
+    )
 
 
 # ============================================================================
@@ -446,7 +445,7 @@ async def get_job_status(
                     code="JOB_NOT_FOUND",
                     message=f"Job with ID {job_id} not found or expired",
                     details={"job_id": str(job_id)}
-                ).dict()
+                ).model_dump()
             )
 
         except ValueError as e:
@@ -458,7 +457,7 @@ async def get_job_status(
                     code="INVALID_STATUS",
                     message="Invalid job status value in storage",
                     details={"job_id": str(job_id), "error": str(e)}
-                ).dict()
+                ).model_dump()
             )
 
         except Exception as e:
@@ -470,7 +469,7 @@ async def get_job_status(
                     code="INTERNAL_SERVER_ERROR",
                     message="An unexpected error occurred while retrieving job status",
                     details={"job_id": str(job_id), "error": str(e)}
-                ).dict()
+                ).model_dump()
             )
 
     Phase 2 Contract:

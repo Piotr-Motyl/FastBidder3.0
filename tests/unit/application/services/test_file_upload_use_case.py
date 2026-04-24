@@ -317,10 +317,9 @@ async def test_extract_descriptions_from_file(mock_file_storage):
     file_id = uuid4()
     fake_path = Path("/fake/file.xlsx")
 
-    # Mock pandas DataFrame
-    import pandas as pd
+    import polars as pl
 
-    mock_df = pd.DataFrame(
+    mock_df = pl.DataFrame(
         {
             "Description": [
                 "Zawór kulowy DN50 PN16",
@@ -331,7 +330,7 @@ async def test_extract_descriptions_from_file(mock_file_storage):
         }
     )
 
-    with patch("pandas.read_excel", return_value=mock_df):
+    with patch("polars.read_excel", return_value=mock_df):
         # Act
         descriptions = await use_case._extract_descriptions_from_file(
             fake_path, file_id
@@ -351,26 +350,25 @@ async def test_extract_descriptions_from_file(mock_file_storage):
 
 @pytest.mark.asyncio
 async def test_extract_descriptions_skips_nan_values(mock_file_storage):
-    """Test that NaN values are skipped during extraction."""
+    """Test that None/null values are skipped during extraction."""
     # Arrange
     use_case = FileUploadUseCase(file_storage=mock_file_storage)
     file_id = uuid4()
     fake_path = Path("/fake/file.xlsx")
 
-    import pandas as pd
-    import numpy as np
+    import polars as pl
 
-    mock_df = pd.DataFrame(
+    mock_df = pl.DataFrame(
         {
             "Description": [
                 "Valid description",
-                np.nan,  # NaN - should be skipped
+                None,  # null - should be skipped
                 "Another valid description",
             ]
         }
     )
 
-    with patch("pandas.read_excel", return_value=mock_df):
+    with patch("polars.read_excel", return_value=mock_df):
         # Act
         descriptions = await use_case._extract_descriptions_from_file(
             fake_path, file_id
@@ -390,13 +388,13 @@ async def test_extract_descriptions_skips_too_short_text(mock_file_storage):
     file_id = uuid4()
     fake_path = Path("/fake/file.xlsx")
 
-    import pandas as pd
+    import polars as pl
 
-    mock_df = pd.DataFrame(
+    mock_df = pl.DataFrame(
         {"Description": ["Valid description text", "AB", "Another valid text"]}  # Too short
     )
 
-    with patch("pandas.read_excel", return_value=mock_df):
+    with patch("polars.read_excel", return_value=mock_df):
         # Act
         descriptions = await use_case._extract_descriptions_from_file(
             fake_path, file_id

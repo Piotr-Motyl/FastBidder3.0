@@ -15,7 +15,7 @@ from src.domain.hvac.entities.hvac_description import (
 from src.domain.hvac.value_objects.extracted_parameters import ExtractedParameters
 from src.domain.hvac.value_objects.match_score import MatchScore
 from src.domain.hvac.value_objects.match_result import MatchResult
-from src.domain.hvac.services.concrete_parameter_extractor import (
+from src.infrastructure.matching.concrete_parameter_extractor import (
     ConcreteParameterExtractor,
 )
 from src.domain.shared.exceptions import InvalidHVACDescriptionError

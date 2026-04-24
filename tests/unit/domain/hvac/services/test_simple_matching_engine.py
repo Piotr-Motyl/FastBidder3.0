@@ -6,7 +6,7 @@ Covers: hybrid matching algorithm, parameter scoring, fast-fail, confidence calc
 import pytest
 
 from src.domain.hvac.services.simple_matching_engine import SimpleMatchingEngine
-from src.domain.hvac.services.concrete_parameter_extractor import (
+from src.infrastructure.matching.concrete_parameter_extractor import (
     ConcreteParameterExtractor,
 )
 from src.domain.hvac.matching_config import MatchingConfig
@@ -657,7 +657,7 @@ def test_engine_with_ai_calculates_real_similarity(engine_with_ai, mock_embeddin
     score = engine_with_ai.calculate_semantic_score(source, reference, source_embedding)
 
     # Same text → same embedding → cosine similarity = 1.0 → score = 100.0
-    assert score == 100.0
+    assert score == pytest.approx(100.0, abs=1e-6)
     # Should NOT be placeholder
     assert score != 50.0
     # embed_single should be called

@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.application.ports.file_storage import FileStorageServiceProtocol
 from src.infrastructure.ai.vector_store.reference_indexer import (
@@ -129,8 +129,8 @@ class FileUploadResult(BaseModel):
         default=None, description="Number of indexed descriptions (reference files only)"
     )
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "file_id": "a3bb189e-8bf9-3888-9912-ace4e6543002",
                 "filename": "my_catalog_2024.xlsx",
@@ -158,6 +158,7 @@ class FileUploadResult(BaseModel):
                 ],
             }
         }
+    )
 
 
 # ============================================================================
@@ -439,34 +440,31 @@ class FileUploadUseCase:
             ValueError: If description validation fails
 
         Note:
-            - Uses pandas to read Excel file
+            - Uses Polars to read Excel file
             - Assumes first column contains descriptions
             - Skips empty rows and invalid descriptions
             - Row numbers are 1-indexed (Excel format)
         """
-        import pandas as pd
+        import polars as pl
 
-        # Read Excel file (first sheet only)
-        df = pd.read_excel(file_path, sheet_name=0)
+        # Read Excel file (first sheet only) — openpyxl is the project-standard backend
+        df = pl.read_excel(file_path, sheet_id=1, engine="openpyxl")
 
         descriptions: list[HVACDescription] = []
+        first_column = df.columns[0]
 
         # Iterate through rows and create HVACDescription entities
-        for idx, row in df.iterrows():
-            # Get first column value (description text)
-            # idx is 0-based, but we want 1-based row numbers (row 1 = first data row after header)
-            row_number = int(idx) + 2  # +1 for 0-based to 1-based, +1 for header row
+        for idx, row in enumerate(df.iter_rows(named=True)):
+            # idx is 0-based; +2 to get 1-based row number accounting for header
+            row_number = idx + 2
 
-            # Get first column value (assuming it contains description)
-            first_column = df.columns[0]
             description_text = str(row[first_column]).strip()
 
             # Skip empty or invalid descriptions
-            if not description_text or description_text == "nan":
+            if not description_text or description_text == "None":
                 continue
 
             try:
-                # Create HVACDescription entity
                 desc = HVACDescription(
                     raw_text=description_text,
                     source_row_number=row_number,
@@ -474,7 +472,6 @@ class FileUploadUseCase:
                 )
                 descriptions.append(desc)
             except InvalidHVACDescriptionError:
-                # Skip invalid descriptions (e.g., too short)
                 continue
 
         return descriptions

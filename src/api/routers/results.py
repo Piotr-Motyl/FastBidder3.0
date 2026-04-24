@@ -313,7 +313,7 @@ async def download_result(
                         code="JOB_NOT_FOUND",
                         message=f"Job with ID {job_id} not found or expired",
                         details={"job_id": job_id_str}
-                    ).dict()
+                    ).model_dump()
                 )
 
             # Step 3: Verify job status is COMPLETED
@@ -331,7 +331,7 @@ async def download_result(
                             f"Poll GET /jobs/{job_id}/status until completed."
                         ),
                         details={"job_id": job_id_str, "current_status": job_status}
-                    ).dict()
+                    ).model_dump()
                 )
 
             # Step 4-5: Get result file path and verify existence
@@ -350,7 +350,7 @@ async def download_result(
                             "The job may have failed or been interrupted."
                         ),
                         details={"job_id": job_id_str}
-                    ).dict()
+                    ).model_dump()
                 )
 
             # Step 6-8: Prepare response with headers
@@ -382,7 +382,7 @@ async def download_result(
                     code="INTERNAL_SERVER_ERROR",
                     message="An unexpected error occurred while downloading result file",
                     details={"job_id": str(job_id), "error": str(e)}
-                ).dict()
+                ).model_dump()
             )
 
     Phase 2 Contract:
@@ -403,7 +403,7 @@ async def download_result(
                     code="JOB_NOT_FOUND",
                     message=f"Job with ID {job_id} not found or expired",
                     details={"job_id": job_id_str},
-                ).dict(),
+                ).model_dump(),
             )
 
         # Step 3: Verify job status is COMPLETED
@@ -421,7 +421,7 @@ async def download_result(
                         f"Poll GET /jobs/{job_id}/status until completed."
                     ),
                     details={"job_id": job_id_str, "current_status": job_status},
-                ).dict(),
+                ).model_dump(),
             )
 
         # Step 4-5: Get result file path and verify existence
@@ -440,7 +440,7 @@ async def download_result(
                         "The job may have failed or been interrupted."
                     ),
                     details={"job_id": job_id_str},
-                ).dict(),
+                ).model_dump(),
             )
 
         # Step 6-8: Prepare response with headers
@@ -472,5 +472,5 @@ async def download_result(
                 code="INTERNAL_SERVER_ERROR",
                 message="An unexpected error occurred while downloading result file",
                 details={"job_id": str(job_id), "error": str(e)},
-            ).dict(),
+            ).model_dump(),
         )

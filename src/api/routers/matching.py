@@ -32,7 +32,7 @@ from typing import Optional, Dict, Any
 from uuid import UUID
 
 from fastapi import APIRouter, status, HTTPException, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.application.models import JobStatus, MatchingStrategy, ReportFormat
 from src.application.commands.process_matching import (
@@ -43,6 +43,7 @@ from src.application.commands.process_matching import (
 )
 from src.application.services.process_matching_use_case import ProcessMatchingUseCase
 from src.infrastructure.file_storage.file_storage_service import FileStorageService
+from src.infrastructure.persistence.redis.progress_tracker import RedisProgressTracker
 
 # Import shared API schemas
 from src.api.schemas.common import ErrorResponse
@@ -93,8 +94,8 @@ class ProcessMatchingRequest(BaseModel):
         description="Report format: SIMPLE, DETAILED, DEBUG",
     )
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "working_file": {
                     "file_id": "a3bb189e-8bf9-3888-9912-ace4e6543002",
@@ -114,6 +115,7 @@ class ProcessMatchingRequest(BaseModel):
                 "report_format": "simple",
             }
         }
+    )
 
 
 class ProcessMatchingResponse(BaseModel):
@@ -144,8 +146,8 @@ class ProcessMatchingResponse(BaseModel):
         description="Human-readable status message",
     )
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "job_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
                 "status": "queued",
@@ -153,6 +155,7 @@ class ProcessMatchingResponse(BaseModel):
                 "message": "Matching job queued successfully. Check status at GET /jobs/3fa85f64-5717-4562-b3fc-2c963f66afa6/status",
             }
         }
+    )
 
 
 
@@ -201,12 +204,13 @@ async def get_process_matching_use_case():
 
     The use case will validate business rules and trigger Celery task.
     """
-    # Create FileStorageService instance
     file_storage = FileStorageService()
-
-    # Create and return ProcessMatchingUseCase with injected dependencies
-    # Note: celery_app is not needed as dependency - use case imports it directly
-    return ProcessMatchingUseCase(file_storage=file_storage, celery_app=None)
+    progress_tracker = RedisProgressTracker()
+    return ProcessMatchingUseCase(
+        file_storage=file_storage,
+        celery_app=None,
+        progress_tracker=progress_tracker,
+    )
 
 
 # ============================================================================
@@ -388,8 +392,8 @@ async def process_matching(
                 detail=ErrorResponse(
                     code="INVALID_PARAMETERS",
                     message=str(e),
-                    details={"request": request.dict()}
-                ).dict()
+                    details={"request": request.model_dump()}
+                ).model_dump()
             )
 
         except FileNotFoundError as e:
@@ -401,7 +405,7 @@ async def process_matching(
                     code="FILE_NOT_FOUND",
                     message=str(e),
                     details={"working_file_id": request.working_file.file_id, "reference_file_id": request.reference_file.file_id}
-                ).dict()
+                ).model_dump()
             )
 
         except Exception as e:
@@ -413,7 +417,7 @@ async def process_matching(
                     code="INTERNAL_SERVER_ERROR",
                     message="An unexpected error occurred during job creation",
                     details={"error": str(e)}
-                ).dict()
+                ).model_dump()
             )
 
     Phase 2 Contract:

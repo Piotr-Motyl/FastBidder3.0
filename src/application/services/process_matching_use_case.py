@@ -30,13 +30,13 @@ import logging
 from typing import TYPE_CHECKING, Optional
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.application.commands.process_matching import ProcessMatchingCommand
 from src.application.models import JobStatus
 from src.application.ports.file_storage import FileStorageServiceProtocol
+from src.application.ports.progress_tracker import ProgressTrackerProtocol
 from src.application.tasks.matching_tasks import process_matching_task
-from src.infrastructure.persistence.redis.progress_tracker import RedisProgressTracker
 
 if TYPE_CHECKING:
     from celery import Celery
@@ -73,6 +73,17 @@ class ProcessMatchingResult(BaseModel):
         ... )
     """
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "job_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                "status": "queued",
+                "estimated_time": 45,
+                "message": "Matching job queued successfully. Use job_id to check status.",
+            }
+        }
+    )
+
     job_id: UUID = Field(description="Celery task ID for tracking progress")
 
     status: JobStatus = Field(
@@ -88,18 +99,6 @@ class ProcessMatchingResult(BaseModel):
         default="Matching job queued successfully. Use job_id to check status.",
         description="Human-readable status message",
     )
-
-    class Config:
-        """Pydantic configuration for ProcessMatchingResult."""
-
-        json_schema_extra = {
-            "example": {
-                "job_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-                "status": "queued",
-                "estimated_time": 45,
-                "message": "Matching job queued successfully. Use job_id to check status.",
-            }
-        }
 
 
 # ============================================================================
@@ -175,24 +174,19 @@ class ProcessMatchingUseCase:
         self,
         celery_app: "Celery",
         file_storage: Optional[FileStorageServiceProtocol] = None,
+        progress_tracker: Optional[ProgressTrackerProtocol] = None,
     ):
         """
         Initialize use case with dependencies.
 
         Args:
             celery_app: Celery application instance for task triggering
-            file_storage: FileStorageService for file validation (optional, Phase 3)
-
-        Architecture Note:
-            Constructor injection follows Clean Architecture and SOLID principles.
-            Dependencies are injected, not created internally.
-            This enables easy testing (mock dependencies) and flexibility.
-
-            file_storage is Optional because in Phase 1 we focus on contracts.
-            In Phase 3, this will be required for business rule validation.
+            file_storage: FileStorageService for file validation (optional)
+            progress_tracker: ProgressTracker for job status initialization (optional)
         """
         self.celery_app = celery_app
         self.file_storage = file_storage
+        self.progress_tracker = progress_tracker
 
     async def execute(self, command: ProcessMatchingCommand) -> ProcessMatchingResult:
         """
@@ -334,14 +328,19 @@ class ProcessMatchingUseCase:
         job_id = str(uuid4())
         logger.info(f"Generated job_id: {job_id}")
 
-        # Initialize job status in Redis BEFORE sending to Celery queue
-        progress_tracker = RedisProgressTracker()
-        progress_tracker.start_job(
-            job_id=job_id,
-            message="Job queued, waiting for worker to start processing",
-            total_items=0,  # Unknown at this point, will be updated by worker
-        )
-        logger.info(f"Job {job_id} initialized in Redis with status QUEUED")
+        # Initialize job status in progress tracker BEFORE sending to Celery queue
+        # This ensures GET /jobs/{id}/status can respond immediately (no race condition)
+        if self.progress_tracker:
+            self.progress_tracker.start_job(
+                job_id=job_id,
+                message="Job queued, waiting for worker to start processing",
+                total_items=0,
+            )
+            logger.info(f"Job {job_id} initialized in progress tracker with status QUEUED")
+        else:
+            logger.warning(
+                f"No progress_tracker injected — job {job_id} not pre-initialized in Redis"
+            )
 
         # Step 8: Trigger Celery task with custom task_id (same as job_id)
         # Using apply_async() instead of delay() to specify custom task_id
