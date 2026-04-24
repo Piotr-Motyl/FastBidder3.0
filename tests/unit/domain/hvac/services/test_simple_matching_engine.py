@@ -619,7 +619,16 @@ def mock_embedding_service():
         # Return 384-dim vector
         return [hash_val] * 384
 
+    def fake_similarity(embedding_a, embedding_b, **kwargs):
+        dot = sum(a * b for a, b in zip(embedding_a, embedding_b))
+        norm_a = sum(x ** 2 for x in embedding_a) ** 0.5
+        norm_b = sum(x ** 2 for x in embedding_b) ** 0.5
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
+
     mock.embed_single.side_effect = fake_embed_single
+    mock.similarity.side_effect = fake_similarity
     return mock
 
 

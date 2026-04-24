@@ -44,7 +44,7 @@ def test_process_matching_success(client, mock_process_matching_use_case, sample
     }
 
     with patch(
-        "src.api.routers.matching.ProcessMatchingUseCase",
+        "src.api.dependencies.ProcessMatchingUseCase",
         return_value=mock_process_matching_use_case,
     ):
         # Act
@@ -179,7 +179,7 @@ def test_process_matching_use_case_error(client):
     mock_use_case.execute = AsyncMock(side_effect=Exception("Celery connection error"))
 
     with patch(
-        "src.api.routers.matching.ProcessMatchingUseCase", return_value=mock_use_case
+        "src.api.dependencies.ProcessMatchingUseCase", return_value=mock_use_case
     ):
         # Act
         response = client.post("/api/matching/process", json=payload)
@@ -220,7 +220,7 @@ def test_process_matching_with_optional_parameters(client, mock_process_matching
     }
 
     with patch(
-        "src.api.routers.matching.ProcessMatchingUseCase",
+        "src.api.dependencies.ProcessMatchingUseCase",
         return_value=mock_process_matching_use_case,
     ):
         # Act

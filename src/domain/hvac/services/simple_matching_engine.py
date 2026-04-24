@@ -32,8 +32,6 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-import numpy as np
-
 from src.domain.hvac.entities.hvac_description import HVACDescription
 from src.domain.hvac.value_objects.match_result import MatchResult
 from src.domain.hvac.value_objects.extracted_parameters import ExtractedParameters
@@ -601,41 +599,17 @@ class SimpleMatchingEngine:
             )
             return self.config.semantic_placeholder * 100.0
 
-        # Calculate cosine similarity
+        # Delegate cosine computation to embedding_service (Infrastructure concern)
         try:
-            # Convert to numpy arrays for efficient computation
-            source_vec = np.array(source_embedding)
-            reference_vec = np.array(reference_embedding)
-
-            # Cosine similarity: dot(A, B) / (norm(A) * norm(B))
-            dot_product = np.dot(source_vec, reference_vec)
-            norm_source = np.linalg.norm(source_vec)
-            norm_reference = np.linalg.norm(reference_vec)
-
-            # Avoid division by zero
-            if norm_source == 0 or norm_reference == 0:
-                logger.warning("Zero-norm vector encountered, using placeholder")
-                return self.config.semantic_placeholder * 100.0
-
-            cosine_similarity = dot_product / (norm_source * norm_reference)
-
-            # Convert to 0-100 scale
-            # Cosine similarity range: -1 to 1, but typically 0 to 1 for text
-            # Multiply by 100 to get 0-100 score
-            semantic_score = cosine_similarity * 100.0
-
-            # Clamp to valid range (safety check)
-            semantic_score = max(0.0, min(100.0, semantic_score))
-
-            logger.debug(
-                f"Calculated semantic score: {semantic_score:.2f} "
-                f"(cosine_sim: {cosine_similarity:.4f})"
+            cosine_sim = self.embedding_service.similarity(
+                source_embedding, reference_embedding
             )
-
+            semantic_score = max(0.0, min(100.0, cosine_sim * 100.0))
+            logger.debug(f"Calculated semantic score: {semantic_score:.2f}")
             return semantic_score
 
         except Exception as e:
-            logger.error(f"Error calculating cosine similarity, using placeholder: {e}")
+            logger.error(f"Error calculating similarity, using placeholder: {e}")
             return self.config.semantic_placeholder * 100.0
 
     def should_fast_fail(

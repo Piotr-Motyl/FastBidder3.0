@@ -92,3 +92,25 @@ class EmbeddingServiceProtocol(Protocol):
             384
         """
         ...
+
+    def similarity(self, embedding_a: list[float], embedding_b: list[float]) -> float:
+        """
+        Calculate cosine similarity between two embedding vectors.
+
+        Returns a value in [0.0, 1.0] for typical text embeddings. Zero-norm
+        vectors return 0.0 instead of raising ZeroDivisionError.
+
+        Args:
+            embedding_a: First embedding vector (list of floats).
+            embedding_b: Second embedding vector (list of floats).
+
+        Returns:
+            Cosine similarity in [-1.0, 1.0]; typically 0.0–1.0 for text.
+
+        Example:
+            >>> a = service.embed_single("Zawór DN50")
+            >>> b = service.embed_single("Zawór DN50")
+            >>> service.similarity(a, b)
+            1.0
+        """
+        ...

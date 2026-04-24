@@ -10,6 +10,7 @@ Uses sentence-transformers library for embedding generation with support for:
 from __future__ import annotations
 
 import logging
+import numpy as np
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -211,3 +212,24 @@ class EmbeddingService:
             384
         """
         return self.model.get_sentence_embedding_dimension()
+
+    def similarity(self, embedding_a: list[float], embedding_b: list[float]) -> float:
+        """
+        Calculate cosine similarity between two embedding vectors.
+
+        Zero-norm vectors return 0.0 to avoid ZeroDivisionError.
+
+        Args:
+            embedding_a: First embedding vector.
+            embedding_b: Second embedding vector.
+
+        Returns:
+            Cosine similarity in [-1.0, 1.0]; typically 0.0–1.0 for text.
+        """
+        a = np.array(embedding_a)
+        b = np.array(embedding_b)
+        norm_a = np.linalg.norm(a)
+        norm_b = np.linalg.norm(b)
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return float(np.dot(a, b) / (norm_a * norm_b))

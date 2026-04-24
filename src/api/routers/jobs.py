@@ -44,7 +44,7 @@ from src.application.queries.get_job_status import (
     JobNotFoundException,
 )
 from src.application.models import JobStatus
-from src.infrastructure.persistence.redis.progress_tracker import RedisProgressTracker
+from src.api.dependencies import get_job_status_query_handler
 
 # Import shared API schemas
 from src.api.schemas.common import ErrorResponse
@@ -152,46 +152,6 @@ router = APIRouter(
         500: {"model": ErrorResponse, "description": "Internal Server Error"},
     },
 )
-
-
-# ============================================================================
-# DEPENDENCY INJECTION - CRITICAL FIX
-# ============================================================================
-
-
-async def get_job_status_query_handler():
-    """
-    Dependency injection for GetJobStatusQueryHandler.
-
-    CRITICAL FIX:
-        Original version returned GetJobStatusQuery (data holder).
-        Corrected version returns GetJobStatusQueryHandler (executor).
-
-    Returns:
-        GetJobStatusQueryHandler: Application Layer query handler with dependencies
-
-    Note:
-        Implementation in Phase 3 (Task 3.4.1).
-        Will inject actual handler with Redis dependencies.
-
-    Architecture Pattern:
-        API Layer → Query Handler → Infrastructure Service
-
-        The handler is injected here with all its dependencies:
-        - RedisProgressTracker from Infrastructure Layer
-
-    Example implementation (Phase 3):
-        from src.application.queries import GetJobStatusQueryHandler
-        from src.infrastructure.persistence.redis import get_redis_progress_tracker
-
-        redis_tracker = get_redis_progress_tracker()
-        return GetJobStatusQueryHandler(redis_tracker)
-    """
-    # Create RedisProgressTracker instance
-    redis_tracker = RedisProgressTracker()
-
-    # Create and return GetJobStatusQueryHandler with injected dependencies
-    return GetJobStatusQueryHandler(progress_tracker=redis_tracker)
 
 
 # ============================================================================

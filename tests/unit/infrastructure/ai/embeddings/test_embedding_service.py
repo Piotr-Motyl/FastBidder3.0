@@ -360,3 +360,48 @@ def test_embeddings_are_deterministic_structure(embedding_service, mock_sentence
     # Assert
     assert result1 == result2  # Same structure
     assert len(result1) == 384
+
+
+# ============================================================================
+# SIMILARITY TESTS
+# ============================================================================
+
+
+def test_similarity_identical_vectors_returns_one():
+    """Identical vectors have cosine similarity of 1.0."""
+    service = EmbeddingService.__new__(EmbeddingService)
+    vec = [0.5, 0.5, 0.5, 0.5]
+    assert service.similarity(vec, vec) == pytest.approx(1.0)
+
+
+def test_similarity_orthogonal_vectors_returns_zero():
+    """Orthogonal vectors have cosine similarity of 0.0."""
+    service = EmbeddingService.__new__(EmbeddingService)
+    a = [1.0, 0.0, 0.0]
+    b = [0.0, 1.0, 0.0]
+    assert service.similarity(a, b) == pytest.approx(0.0)
+
+
+def test_similarity_opposite_vectors_returns_minus_one():
+    """Opposite vectors have cosine similarity of -1.0."""
+    service = EmbeddingService.__new__(EmbeddingService)
+    a = [1.0, 0.0]
+    b = [-1.0, 0.0]
+    assert service.similarity(a, b) == pytest.approx(-1.0)
+
+
+def test_similarity_zero_norm_vector_returns_zero():
+    """Zero-norm vector returns 0.0 without raising ZeroDivisionError."""
+    service = EmbeddingService.__new__(EmbeddingService)
+    zero = [0.0, 0.0, 0.0]
+    normal = [1.0, 0.0, 0.0]
+    assert service.similarity(zero, normal) == 0.0
+    assert service.similarity(normal, zero) == 0.0
+    assert service.similarity(zero, zero) == 0.0
+
+
+def test_similarity_returns_float():
+    """similarity() always returns a plain Python float."""
+    service = EmbeddingService.__new__(EmbeddingService)
+    result = service.similarity([1.0, 0.0], [0.0, 1.0])
+    assert isinstance(result, float)

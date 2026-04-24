@@ -35,19 +35,14 @@ import logging
 import os
 import time
 from datetime import datetime
-from decimal import Decimal
-from uuid import UUID
 
-import polars as pl
 import psutil
 from celery import Task
 from celery.exceptions import SoftTimeLimitExceeded
 
 from .celery_app import celery_app
-from src.application.commands.process_matching import ProcessMatchingCommand
 from src.application.models import MatchingStrategy, ReportFormat
-from src.shared.utils.excel import excel_column_to_index
-from src.domain.hvac.entities.hvac_description import HVACDescription
+from src.application.services.matching_service import ProcessMatchingService
 from src.infrastructure.matching.concrete_parameter_extractor import (
     ConcreteParameterExtractor,
 )
@@ -231,564 +226,143 @@ def process_matching_task(
         ...     report_format="detailed"
         ... )
     """
-    # Initialize tracking variables
     start_time = time.time()
     job_id = self.request.id
-    process = psutil.Process(os.getpid())
-    partial_results = False
-    rows_processed = 0
-    rows_matched = 0
+    sys_process = psutil.Process(os.getpid())
+    ai_event_loop = None
+    using_ai = False
+    ai_model = None
 
-    # Helper function for logging with memory
-    def log_with_memory(stage: str, message: str):
-        memory_mb = process.memory_info().rss / 1024 / 1024
-        timestamp = datetime.now().isoformat()
-        logger.info(f"{timestamp} | {memory_mb:.1f}MB | {stage} | {message}")
+    def log_mem(stage: str, message: str) -> None:
+        memory_mb = sys_process.memory_info().rss / 1024 / 1024
+        logger.info(f"{datetime.now().isoformat()} | {memory_mb:.1f}MB | {stage} | {message}")
 
-    # Initialize RedisProgressTracker BEFORE try block
-    # This ensures it's available in update_progress() closure and except/finally blocks
     progress_tracker = RedisProgressTracker()
 
-    # Helper function for progress updates (uses both Celery native + RedisProgressTracker)
-    def update_progress(
-        percentage: int, message: str, stage: str, current: int = 0, total: int = 0
-    ):
-        # Update Celery native state (for Flower monitoring)
+    def update_progress(pct: int, msg: str, stage: str, current: int = 0, total: int = 0) -> None:
         self.update_state(
             state="PROCESSING",
-            meta={
-                "progress": percentage,
-                "message": message,
-                "current_item": current,
-                "total_items": total,
-                "stage": stage,
-            },
+            meta={"progress": pct, "message": msg, "current_item": current,
+                  "total_items": total, "stage": stage},
         )
-
-        # Update RedisProgressTracker (for our API /jobs/{job_id}/status)
         try:
             progress_tracker.update_progress(
-                job_id=job_id,
-                progress=percentage,
-                message=message,
-                current_item=current,
-                total_items=total,
-                stage=stage,
-                eta_seconds=0,  # TODO: calculate ETA based on processing rate
-                memory_mb=process.memory_info().rss / 1024 / 1024,
+                job_id=job_id, progress=pct, message=msg,
+                current_item=current, total_items=total, stage=stage,
+                eta_seconds=0, memory_mb=sys_process.memory_info().rss / 1024 / 1024,
                 errors=None,
             )
         except Exception as e:
-            # Log error but don't fail task if progress tracking fails
-            logger.warning(f"Failed to update progress in Redis: {e}")
-
-        log_with_memory(
-            stage, f"{message} ({current}/{total})" if total > 0 else message
-        )
-
-    # Initialize variables before try block to avoid UnboundLocalError in except/finally
-    file_storage = None
-    excel_writer = None
-    excel_reader = None
-    wf_df = None
-    ref_df = None
-    wf_descriptions = None
-    ref_descriptions = None
-    matches_count = 0
-    rows_processed = 0
-    rows_matched = 0
-    partial_results = False
-    start_time = time.time()
-    ai_event_loop = None  # Single event loop for all async AI calls (F2 fix)
+            logger.warning(f"Failed to update Redis progress: {e}")
+        log_mem(stage, f"{msg} ({current}/{total})" if total > 0 else msg)
 
     try:
-        # ===== STAGE 0: Initialize job in Redis =====
-        # Start job tracking in Redis so API can query status immediately
-        progress_tracker.start_job(
-            job_id=job_id,
-            message="Job started - initializing services",
-            total_items=0,  # Will be updated after loading files
-        )
-        logger.info(f"Job {job_id} started in Redis progress tracker")
-
-        # ===== STAGE 1: START (0%) =====
+        progress_tracker.start_job(job_id=job_id, message="Job started", total_items=0)
         update_progress(0, "Task started", "START")
 
-        # Initialize services
+        # ===== Service and engine initialization =====
         excel_reader = ExcelReaderService()
         excel_writer = ExcelWriterService()
         file_storage = FileStorageService()
         parameter_extractor = ConcreteParameterExtractor()
-
-        # Create matching config
         config = MatchingConfig.default()
 
-        # ===== AI MATCHING SETUP (Phase 4) =====
-        # Check if AI matching is enabled via environment variable
+        # Validate strategy/format enums (raises ValueError for unknown values)
+        MatchingStrategy(matching_strategy)
+        ReportFormat(report_format)
+
         use_ai_matching = os.getenv("USE_AI_MATCHING", "false").lower() == "true"
-        using_ai = False
-        ai_model = None
 
         if use_ai_matching:
             try:
-                # Try to initialize HybridMatchingEngine with AI components
-                logger.info("USE_AI_MATCHING=true detected - initializing AI matching pipeline")
+                from src.infrastructure.ai.embeddings.embedding_service import EmbeddingService
+                from src.infrastructure.ai.vector_store.chroma_client import ChromaClientSingleton
+                from src.infrastructure.ai.retrieval.semantic_retriever import SemanticRetriever
+                from src.infrastructure.matching.hybrid_matching_engine import HybridMatchingEngine
 
-                from src.infrastructure.ai.embeddings.embedding_service import (
-                    EmbeddingService,
-                )
-                from src.infrastructure.ai.vector_store.chroma_client import (
-                    ChromaClientSingleton,
-                )
-                from src.infrastructure.ai.retrieval.semantic_retriever import (
-                    SemanticRetriever,
-                )
-                from src.infrastructure.matching.hybrid_matching_engine import (
-                    HybridMatchingEngine,
-                )
-
-                # Initialize AI services for two-stage pipeline
                 embedding_service = EmbeddingService()
                 chroma_client = ChromaClientSingleton.get_instance()
                 semantic_retriever = SemanticRetriever(embedding_service, chroma_client)
-
-                # Create SimpleMatchingEngine with AI embeddings for Stage 2
-                simple_engine = SimpleMatchingEngine(
-                    parameter_extractor, config, embedding_service
-                )
-
-                # Create HybridMatchingEngine (two-stage pipeline: retrieval + scoring)
-                # Pass reference file_id to filter ChromaDB queries to current reference file only
+                simple_engine = SimpleMatchingEngine(parameter_extractor, config, embedding_service)
                 matching_engine = HybridMatchingEngine(
                     semantic_retriever=semantic_retriever,
                     simple_matching_engine=simple_engine,
                     config=config,
-                    reference_file_id=reference_file["file_id"],  # Filter queries by file_id
+                    reference_file_id=reference_file["file_id"],
                 )
-
                 using_ai = True
                 ai_model = embedding_service.model_name
-                logger.info(
-                    "AI matching enabled: Using HybridMatchingEngine (Stage 1: Retrieval, Stage 2: Scoring)"
-                )
-
+                ai_event_loop = asyncio.new_event_loop()
+                logger.info("AI matching enabled: HybridMatchingEngine")
             except Exception as e:
-                # Fallback to SimpleMatchingEngine if AI initialization fails
-                logger.warning(
-                    f"Failed to initialize AI matching, falling back to SimpleMatchingEngine: {e}"
-                )
+                logger.warning(f"AI init failed, falling back to SimpleMatchingEngine: {e}")
                 matching_engine = SimpleMatchingEngine(parameter_extractor, config)
-                using_ai = False
-                ai_model = None
         else:
-            # AI matching disabled - use SimpleMatchingEngine with placeholder semantic scores
-            logger.info(
-                "AI matching disabled (USE_AI_MATCHING=false): Using SimpleMatchingEngine with placeholder semantic scores"
-            )
             matching_engine = SimpleMatchingEngine(parameter_extractor, config)
-            using_ai = False
-            ai_model = None
 
-        # Create single event loop for AI async calls (reused per item, not recreated)
-        if using_ai:
-            ai_event_loop = asyncio.new_event_loop()
-
-        # Convert strategy and format strings to Enums
-        strategy = MatchingStrategy(matching_strategy)
-        format_type = ReportFormat(report_format)
-
-        # ===== STAGE 2: FILES_LOADED (10%) =====
-        update_progress(10, "Loading files from storage", "FILES_LOADED")
-
-        # Get file paths from UPLOAD storage (not job storage)
-        # Files are in /tmp/fastbidder/uploads/{file_id}/ after upload
-        wf_file_id = UUID(working_file["file_id"])
-        ref_file_id = UUID(reference_file["file_id"])
-
-        # Get upload directories
-        wf_upload_dir = file_storage.get_uploaded_file_path(wf_file_id)
-        ref_upload_dir = file_storage.get_uploaded_file_path(ref_file_id)
-
-        # Find the uploaded files (original filename is preserved in upload storage)
-        wf_files = list(wf_upload_dir.glob("*.xlsx"))
-        ref_files = list(ref_upload_dir.glob("*.xlsx"))
-
-        if not wf_files:
-            raise FileNotFoundError(
-                f"No working file found in upload directory: {wf_upload_dir}"
-            )
-        if not ref_files:
-            raise FileNotFoundError(
-                f"No reference file found in upload directory: {ref_upload_dir}"
-            )
-
-        wf_path = wf_files[0]
-        ref_path = ref_files[0]
-
-        # Load Excel DataFrames
-        wf_df = excel_reader.read_excel_to_dataframe(wf_path)
-        ref_df = excel_reader.read_excel_to_dataframe(ref_path)
-
-        # ===== STAGE 3: DESCRIPTIONS_EXTRACTED (30%) =====
-        update_progress(
-            30, "Extracting descriptions from Excel", "DESCRIPTIONS_EXTRACTED"
+        # ===== Delegate all matching business logic to ProcessMatchingService =====
+        service = ProcessMatchingService(
+            matching_engine=matching_engine,
+            parameter_extractor=parameter_extractor,
+            file_storage=file_storage,
+            excel_reader=excel_reader,
+            excel_writer=excel_writer,
+            using_ai=using_ai,
+            ai_model=ai_model,
+            ai_event_loop=ai_event_loop,
         )
 
-        # Extract descriptions from working file
-        wf_col_idx = excel_column_to_index(working_file["description_column"])
-        wf_range_start = working_file["description_range"]["start"] - 1  # 0-based
-        wf_range_end = working_file["description_range"]["end"]
-        wf_col_name = wf_df.columns[wf_col_idx]
-        wf_raw_texts = wf_df[wf_range_start:wf_range_end][wf_col_name].to_list()
-
-        # Extract descriptions from reference file
-        ref_col_idx = excel_column_to_index(reference_file["description_column"])
-        ref_range_start = reference_file["description_range"]["start"] - 1
-        ref_range_end = reference_file["description_range"]["end"]
-        ref_col_name = ref_df.columns[ref_col_idx]
-        ref_raw_texts = ref_df[ref_range_start:ref_range_end][ref_col_name].to_list()
-
-        # Extract prices from reference file
-        ref_price_col_idx = excel_column_to_index(reference_file["price_source_column"])
-        ref_price_col_name = ref_df.columns[ref_price_col_idx]
-        ref_prices = ref_df[ref_range_start:ref_range_end][ref_price_col_name].to_list()
-
-        total_wf_rows = len(wf_raw_texts)
-        log_with_memory(
-            "DESCRIPTIONS_EXTRACTED",
-            f"Extracted {total_wf_rows} WF descriptions, {len(ref_raw_texts)} REF descriptions",
+        result = service.process(
+            job_id=job_id,
+            working_file=working_file,
+            reference_file=reference_file,
+            matching_threshold=matching_threshold,
+            matching_strategy=matching_strategy,
+            report_format=report_format,
+            progress_callback=update_progress,
         )
 
-        # ===== STAGE 4: PARAMETERS_EXTRACTED (50%) =====
-        update_progress(
-            50, "Extracting HVAC parameters (DN, PN, etc.)", "PARAMETERS_EXTRACTED"
-        )
-
-        # Initialize output result lists (Polars DataFrames are immutable —
-        # collect per-row values during the loop, write all at once after with with_columns())
-        n_rows = len(wf_df)
-        target_col_idx = excel_column_to_index(working_file["price_target_column"])
-        price_results: list = [None] * n_rows
-        score_results: list = [None] * n_rows
-
-        report_col_idx = None
-        report_results: list | None = None
-        if working_file.get("matching_report_column"):
-            report_col_idx = excel_column_to_index(working_file["matching_report_column"])
-            report_results = [None] * n_rows
-
-        logger.info(
-            f"Initialized output lists: price col {target_col_idx}, "
-            f"score col {target_col_idx + 1}, "
-            f"report col {report_col_idx if report_col_idx is not None else 'N/A'}"
-        )
-
-        # Create HVACDescription entities and extract parameters
-        wf_descriptions = []
-        for idx, text in enumerate(wf_raw_texts):
-            desc = HVACDescription(raw_text=str(text) if text else "")
-            desc.extract_parameters(parameter_extractor)
-            wf_descriptions.append(desc)
-
-        ref_descriptions = []
-        for idx, (text, price) in enumerate(zip(ref_raw_texts, ref_prices)):
-            desc = HVACDescription(raw_text=str(text) if text else "")
-            desc.extract_parameters(parameter_extractor)
-            # Set price directly as field (HVACDescription is a dataclass)
-            if price and price != "":
-                desc.matched_price = Decimal(str(price))
-            ref_descriptions.append(desc)
-
-        # ===== STAGE 5: MATCHING (50-90%) =====
-        update_interval = min(100, max(1, total_wf_rows // 10))
-        log_with_memory(
-            "MATCHING",
-            f"Starting matching with interval={update_interval} (threshold={matching_threshold})",
-        )
-
-        matches_count = 0
-        rows_processed = 0
-
-        for wf_idx, wf_desc in enumerate(wf_descriptions):
-            # Find match using matching engine (handle both sync and async engines)
-            if using_ai:
-                # HybridMatchingEngine: async interface — reuse single event loop per task
-                assert ai_event_loop is not None  # created above when using_ai=True
-                match_result = ai_event_loop.run_until_complete(
-                    matching_engine.match(
-                        working_description=wf_desc,
-                        reference_descriptions=[],  # Not used in hybrid mode
-                        threshold=matching_threshold,
-                    )
-                )
-            else:
-                # SimpleMatchingEngine: sync interface
-                match_result = matching_engine.match_single(
-                    wf_desc, ref_descriptions, matching_threshold
-                )
-
-            rows_processed += 1
-
-            if match_result:
-                # Apply match result to working description
-                wf_desc.apply_match_result(match_result)
-
-                # Find matched reference description by ID
-                # For AI matching: ref_descriptions is empty, retrieve from DataFrame
-                # For non-AI matching: find in ref_descriptions list
-                matched_ref_desc = None
-
-                if using_ai:
-                    # AI matching: parse matched_reference_id and retrieve price from DataFrame
-                    # Format: "{file_id}_{row_number}" where row_number is Excel row (1-based)
-                    try:
-                        # Parse ChromaDB ID to extract row number
-                        # Example: "687bfd5e-a4f9-4dd8-b5e6-a953efc2bde7_2" → row 2
-                        id_parts = match_result.matched_reference_id.split("_")
-
-                        if len(id_parts) >= 2:
-                            # Last part is source_row_number (1-based Excel row)
-                            source_row_number = int(id_parts[-1])
-
-                            # Calculate 0-based DataFrame index
-                            # source_row_number is Excel row from metadata (e.g., 2 for first data row)
-                            # ref_range_start is 0-based DataFrame index for range start
-                            # Need to find offset from range start
-                            df_index = source_row_number - (reference_file["description_range"]["start"])
-
-                            # Get price from reference DataFrame
-                            if 0 <= df_index < len(ref_prices):
-                                price_value = ref_prices[df_index]
-                                ref_text = ref_raw_texts[df_index] if df_index < len(ref_raw_texts) else ""
-
-                                # Create HVACDescription with price for consistent processing
-                                matched_ref_desc = HVACDescription(
-                                    raw_text=str(ref_text) if ref_text else ""
-                                )
-
-                                # Set price if available
-                                if price_value and price_value != "":
-                                    matched_ref_desc.matched_price = Decimal(str(price_value))
-
-                                logger.debug(
-                                    f"AI matching: Retrieved price for row {source_row_number}: "
-                                    f"{price_value if price_value else 'N/A'}"
-                                )
-                            else:
-                                logger.warning(
-                                    f"AI matching: Row index {df_index} out of range "
-                                    f"(total {len(ref_prices)} prices)"
-                                )
-                        else:
-                            logger.warning(
-                                f"AI matching: Invalid matched_reference_id format: "
-                                f"{match_result.matched_reference_id}"
-                            )
-
-                    except Exception as e:
-                        logger.error(
-                            f"AI matching: Failed to retrieve price from DataFrame: {e}",
-                            exc_info=True
-                        )
-                        matched_ref_desc = None
-
-                else:
-                    # Non-AI matching: find in ref_descriptions list
-                    matched_ref_desc = next(
-                        (
-                            desc
-                            for desc in ref_descriptions
-                            if desc.id == match_result.matched_reference_id
-                        ),
-                        None,
-                    )
-
-                if matched_ref_desc:
-                    # Collect match result into output lists (written to DataFrame after loop)
-                    target_row = wf_range_start + wf_idx
-                    price_value = (
-                        float(matched_ref_desc.matched_price)
-                        if matched_ref_desc.matched_price
-                        else None
-                    )
-                    price_results[target_row] = price_value
-                    score_results[target_row] = float(match_result.score.final_score)
-
-                    if report_results is not None:
-                        report_results[target_row] = (
-                            f"Match: {matched_ref_desc.raw_text[:50]}... "
-                            f"| Score: {match_result.score.final_score:.1f}%"
-                        )
-
-                    matches_count += 1
-                    rows_matched += 1
-
-            # Update progress at calculated interval
-            if (wf_idx + 1) % update_interval == 0 or wf_idx == total_wf_rows - 1:
-                progress_pct = 50 + int((wf_idx + 1) / total_wf_rows * 40)
-                update_progress(
-                    progress_pct,
-                    f"Matching descriptions ({matches_count} matched)",
-                    "MATCHING",
-                    current=wf_idx + 1,
-                    total=total_wf_rows,
-                )
-
-        # ===== Write collected results to DataFrame (Polars with_columns) =====
-        # Ensure DataFrame has enough columns for target index
-        while len(wf_df.columns) <= target_col_idx:
-            wf_df = wf_df.with_columns(pl.lit(None).alias(f"_col_{len(wf_df.columns)}"))
-        score_col_idx = target_col_idx + 1
-        while len(wf_df.columns) <= score_col_idx:
-            wf_df = wf_df.with_columns(pl.lit(None).alias(f"_col_{len(wf_df.columns)}"))
-
-        update_cols = [
-            pl.Series(wf_df.columns[target_col_idx], price_results),
-            pl.Series(wf_df.columns[score_col_idx], score_results),
-        ]
-        if report_results is not None and report_col_idx is not None:
-            while len(wf_df.columns) <= report_col_idx:
-                wf_df = wf_df.with_columns(pl.lit(None).alias(f"_col_{len(wf_df.columns)}"))
-            update_cols.append(pl.Series(wf_df.columns[report_col_idx], report_results))
-
-        wf_df = wf_df.with_columns(update_cols)
-
-        # ===== STAGE 6: SAVING_RESULTS (90%) =====
-        update_progress(90, "Saving results to Excel file", "SAVING_RESULTS")
-
-        # Save modified working file as result
-        result_path = file_storage.get_result_file_path(UUID(job_id))
-        excel_writer.save_dataframe_to_excel(wf_df, result_path)
-
-        # ===== STAGE 7: COMPLETE (100%) =====
         processing_time = time.time() - start_time
-        update_progress(
-            100,
-            "Matching completed successfully",
-            "COMPLETE",
-            total_wf_rows,
-            total_wf_rows,
-        )
-
-        # Update Redis progress tracker
+        update_progress(100, "Matching completed successfully", "COMPLETE",
+                        result.rows_processed, result.rows_processed)
         progress_tracker.complete_job(
             job_id,
-            {
-                "matches_count": matches_count,
-                "rows_processed": rows_processed,
-                "rows_matched": rows_matched,
-            },
+            {"matches_count": result.matches_count,
+             "rows_processed": result.rows_processed,
+             "rows_matched": result.rows_matched},
         )
 
-        # Return success result with metrics (Phase 4: includes AI matching info)
         return {
             "status": "completed",
             "job_id": job_id,
-            "matches_count": matches_count,
+            "matches_count": result.matches_count,
             "processing_time": processing_time,
-            "result_file_id": job_id,  # Result file uses job_id
+            "result_file_id": job_id,
             "matching_strategy_used": matching_strategy,
             "report_format_used": report_format,
             "partial_results": False,
-            "rows_processed": rows_processed,
-            "rows_matched": rows_matched,
-            "using_ai": using_ai,  # Phase 4: AI matching enabled
-            "ai_model": ai_model,  # Phase 4: AI model name if AI enabled
+            "rows_processed": result.rows_processed,
+            "rows_matched": result.rows_matched,
+            "using_ai": result.using_ai,
+            "ai_model": result.ai_model,
         }
 
     except SoftTimeLimitExceeded:
-        # Soft time limit reached - save partial results
-        logger.warning(
-            f"Job {job_id}: Soft time limit exceeded, saving partial results"
-        )
-        partial_results = True
-
-        # Only save if services were initialized
-        if file_storage is not None and excel_writer is not None and wf_df is not None:
-            try:
-                result_path = file_storage.get_result_file_path(UUID(job_id))
-                excel_writer.save_dataframe_to_excel(wf_df, result_path)
-                processing_time = time.time() - start_time
-
-                return {
-                    "status": "completed",
-                    "job_id": job_id,
-                    "matches_count": matches_count,
-                    "processing_time": processing_time,
-                    "result_file_id": job_id,
-                    "matching_strategy_used": matching_strategy,
-                    "report_format_used": report_format,
-                    "partial_results": True,
-                    "rows_processed": rows_processed,
-                    "rows_matched": rows_matched,
-                    "error": "Soft time limit exceeded - partial results saved",
-                    "using_ai": using_ai,  # Phase 4: AI matching info
-                    "ai_model": ai_model,  # Phase 4: AI model name
-                }
-            except Exception as save_exc:
-                logger.error(
-                    f"Job {job_id}: Failed to save partial results: {save_exc}"
-                )
-                raise
-        else:
-            # Services not initialized, cannot save
-            logger.error(
-                f"Job {job_id}: Cannot save partial results - services not initialized"
-            )
-            raise
+        logger.warning(f"Job {job_id}: Soft time limit exceeded")
+        raise
 
     except Exception as exc:
-        # Log error with memory usage
-        log_with_memory("ERROR", f"Task failed: {str(exc)}")
-
-        # Try to save partial results (only if services were initialized)
+        log_mem("ERROR", f"Task failed: {exc}")
         try:
-            if (
-                rows_processed > 0
-                and wf_df is not None
-                and file_storage is not None
-                and excel_writer is not None
-            ):
-                logger.info(
-                    f"Job {job_id}: Attempting to save partial results ({rows_processed} rows processed)"
-                )
-                result_path = file_storage.get_result_file_path(UUID(job_id))
-                excel_writer.save_dataframe_to_excel(wf_df, result_path)
-                partial_results = True
-                logger.info(f"Job {job_id}: Partial results saved")
-        except Exception as save_exc:
-            logger.error(f"Job {job_id}: Failed to save partial results: {save_exc}")
-            partial_results = False
-
-        # Update progress tracker with failure (only if tracker was initialized)
-        try:
-            if progress_tracker is not None:
-                progress_tracker.fail_job(job_id, str(exc))
+            progress_tracker.fail_job(job_id, str(exc))
         except Exception:
             pass
-
-        # Retry with exponential backoff
         raise self.retry(exc=exc)
 
     finally:
-        # Close AI event loop if it was created
         if ai_event_loop is not None:
             try:
                 ai_event_loop.close()
-            except Exception as loop_exc:
-                logger.error(f"Job {job_id}: Failed to close event loop: {loop_exc}")
-
-        # Cleanup: clear large variables from memory
-        try:
-            if wf_df is not None:
-                del wf_df
-            if ref_df is not None:
-                del ref_df
-            if wf_descriptions is not None:
-                del wf_descriptions
-            if ref_descriptions is not None:
-                del ref_descriptions
-
-            log_with_memory("CLEANUP", "Memory cleanup completed")
-        except Exception as cleanup_exc:
-            logger.error(f"Job {job_id}: Cleanup failed: {cleanup_exc}")
+            except Exception as e:
+                logger.error(f"Job {job_id}: Failed to close event loop: {e}")
+        log_mem("CLEANUP", "Task finished")

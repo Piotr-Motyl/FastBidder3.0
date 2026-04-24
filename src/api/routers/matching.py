@@ -28,8 +28,6 @@ Phase 1 Note:
 """
 
 import logging
-from typing import Optional, Dict, Any
-from uuid import UUID
 
 from fastapi import APIRouter, status, HTTPException, Depends
 from pydantic import BaseModel, ConfigDict, Field
@@ -39,11 +37,8 @@ from src.application.commands.process_matching import (
     ProcessMatchingCommand,
     WorkingFileConfig,
     ReferenceFileConfig,
-    Range,
 )
-from src.application.services.process_matching_use_case import ProcessMatchingUseCase
-from src.infrastructure.file_storage.file_storage_service import FileStorageService
-from src.infrastructure.persistence.redis.progress_tracker import RedisProgressTracker
+from src.api.dependencies import get_process_matching_use_case
 
 # Import shared API schemas
 from src.api.schemas.common import ErrorResponse
@@ -181,36 +176,6 @@ router = APIRouter(
         500: {"model": ErrorResponse, "description": "Internal Server Error"},
     },
 )
-
-
-# ============================================================================
-# DEPENDENCY INJECTION
-# ============================================================================
-
-
-async def get_process_matching_use_case():
-    """
-    Dependency injection for ProcessMatchingUseCase.
-
-    Returns:
-        ProcessMatchingUseCase: Application Layer use case for triggering matching
-
-    Note:
-        Implementation in Phase 3 (Task 3.4.1).
-        Will inject actual use case with all its dependencies:
-        - FileStorageService for validating files exist
-        - Celery app for triggering async tasks
-        - ProgressTracker for initializing job tracking
-
-    The use case will validate business rules and trigger Celery task.
-    """
-    file_storage = FileStorageService()
-    progress_tracker = RedisProgressTracker()
-    return ProcessMatchingUseCase(
-        file_storage=file_storage,
-        celery_app=None,
-        progress_tracker=progress_tracker,
-    )
 
 
 # ============================================================================
