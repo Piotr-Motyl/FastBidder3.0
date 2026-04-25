@@ -619,6 +619,10 @@ def mock_embedding_service():
         # Return 384-dim vector
         return [hash_val] * 384
 
+    def fake_embed_batch(texts, **kwargs):
+        # Batch version — delegates to fake_embed_single for each text
+        return [fake_embed_single(t) for t in texts]
+
     def fake_similarity(embedding_a, embedding_b, **kwargs):
         dot = sum(a * b for a, b in zip(embedding_a, embedding_b))
         norm_a = sum(x ** 2 for x in embedding_a) ** 0.5
@@ -628,6 +632,7 @@ def mock_embedding_service():
         return dot / (norm_a * norm_b)
 
     mock.embed_single.side_effect = fake_embed_single
+    mock.embed_batch.side_effect = fake_embed_batch
     mock.similarity.side_effect = fake_similarity
     return mock
 
@@ -688,8 +693,8 @@ def test_calculate_semantic_score_different_texts(engine_with_ai):
     # We can't predict exact score, but it should be valid
 
 
-def test_source_embedding_cached_in_match_single(engine_with_ai, mock_embedding_service):
-    """Test that source embedding is cached and reused for all references."""
+def test_source_embedding_cached_embed_batch_used_for_refs(engine_with_ai, mock_embedding_service):
+    """Test that source is embedded via embed_single (once) and refs via embed_batch (once)."""
     source = HVACDescription(raw_text="Zawór DN50 PN16")
     references = [
         HVACDescription(raw_text="Ref 1"),
@@ -697,17 +702,53 @@ def test_source_embedding_cached_in_match_single(engine_with_ai, mock_embedding_
         HVACDescription(raw_text="Ref 3"),
     ]
 
-    # Reset call count
+    mock_embedding_service.embed_single.reset_mock()
+    mock_embedding_service.embed_batch.reset_mock()
+
+    engine_with_ai.match_single(source, references, threshold=40.0)
+
+    # embed_single called exactly once — for source
+    assert mock_embedding_service.embed_single.call_count == 1
+    # embed_batch called exactly once — for all 3 references together
+    assert mock_embedding_service.embed_batch.call_count == 1
+    # embed_batch received all 3 reference texts
+    batch_call_args = mock_embedding_service.embed_batch.call_args[0][0]
+    assert len(batch_call_args) == 3
+
+
+def test_precomputed_reference_embedding_skips_embed_single(engine_with_ai, mock_embedding_service):
+    """Test that calculate_semantic_score uses pre-computed embedding without calling embed_single."""
+    source = HVACDescription(raw_text="Zawór DN50")
+    reference = HVACDescription(raw_text="Zawór DN50")
+
+    source_emb = [0.5] * 384
+    precomputed_ref_emb = [0.5] * 384  # identical → similarity = 1.0 → score = 100.0
+
     mock_embedding_service.embed_single.reset_mock()
 
-    # Match
-    result = engine_with_ai.match_single(source, references, threshold=40.0)
+    score = engine_with_ai.calculate_semantic_score(source, reference, source_emb, precomputed_ref_emb)
 
-    # embed_single should be called 4 times:
-    # - 1x for source (cached)
-    # - 3x for references (one per reference)
-    # NOT 6 times (3 references * 2 = source + reference each time)
-    assert mock_embedding_service.embed_single.call_count == 4
+    # embed_single must NOT have been called — we used the pre-computed embedding
+    mock_embedding_service.embed_single.assert_not_called()
+    assert score == pytest.approx(100.0, abs=1e-4)
+
+
+def test_batch_embedding_fallback_to_per_ref_on_failure(engine_with_ai, mock_embedding_service):
+    """Test that match_single falls back to per-ref embed_single when embed_batch fails."""
+    source = HVACDescription(raw_text="Zawór DN50 PN16")
+    references = [
+        HVACDescription(raw_text="Ref A"),
+        HVACDescription(raw_text="Ref B"),
+    ]
+
+    # Make embed_batch raise so fallback path is exercised
+    mock_embedding_service.embed_batch.side_effect = RuntimeError("batch unavailable")
+    mock_embedding_service.embed_single.reset_mock()
+
+    engine_with_ai.match_single(source, references, threshold=40.0)
+
+    # embed_single called for source (1x) + each ref via fallback embed_single (2x) = 3
+    assert mock_embedding_service.embed_single.call_count == 3
 
 
 def test_embedding_failure_falls_back_to_placeholder(engine_with_ai, mock_embedding_service):

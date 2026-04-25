@@ -105,15 +105,6 @@ def get_column_index(headers: list, column_name: str) -> int:
 
 
 @pytest.mark.e2e
-@pytest.mark.skip(
-    reason="UNSTABLE - ChromaDB matching unreliable. "
-    "Issue: Items not matched (price=None) despite ChromaDB having correct data. "
-    "Possibly related to: (1) ChromaDB query filters not matching indexed metadata, "
-    "(2) Semantic retrieval returning 0 results intermittently, "
-    "(3) file_id mismatch between indexing and retrieval. "
-    "TODO: Investigate hybrid_matching_engine.py Stage 1 retrieval logic and ChromaDB filter consistency. "
-    "See: test_e2e_fixed.log line 242 'Row 2 should have price (matched)'"
-)
 def test_polish_characters_in_descriptions(
     test_client,
     clean_redis,
@@ -292,15 +283,6 @@ def test_polish_characters_in_descriptions(
 
 
 @pytest.mark.e2e
-@pytest.mark.skip(
-    reason="UNSTABLE - ChromaDB matching unreliable. "
-    "Issue: Single item not matched (price=None at row 2). "
-    "Same root cause as test_polish_characters_in_descriptions: ChromaDB retrieval returns 0 results. "
-    "Possibly related to: (1) ChromaDB singleton cache not reset properly, "
-    "(2) file_id filter mismatch, (3) Embedding indexing/query inconsistency. "
-    "TODO: Debug semantic_retriever.py query logic and reference_indexer.py metadata consistency. "
-    "See: Celery logs 'Retrieved 0 results (filters: True, top_k: 20)'"
-)
 def test_minimum_viable_input_single_item(
     test_client,
     clean_redis,

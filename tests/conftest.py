@@ -25,10 +25,11 @@ Usage:
         assert response.status_code == 200
 """
 
+import gc
 import logging
+import shutil
 import time
 from pathlib import Path
-from typing import Generator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -180,20 +181,32 @@ def clean_chromadb():
         - Backup cleanup: This fixture cleans if developer runs pytest directly
         - No teardown: Keeps data for post-mortem debugging of failed tests
     """
-    from pathlib import Path
-    import shutil
     from src.infrastructure.ai.vector_store.chroma_client import ChromaClientSingleton
 
     chroma_dir = Path("data/chroma_db")
 
-    # CRITICAL: Reset singleton FIRST to release file locks and clear cache
+    # CRITICAL: Reset singleton FIRST to release the Python reference
     ChromaClientSingleton.reset_instance()
-    logger.debug("ChromaDB singleton reset")
+    # Force Python GC so the ChromaDB client (and its SQLite WAL handles) is released
+    gc.collect()
+    # Brief pause for the OS to release SQLite file locks (especially on Windows)
+    time.sleep(0.1)
 
-    # Clean before test - simple directory removal (ignore errors for Windows locks)
     if chroma_dir.exists():
-        shutil.rmtree(chroma_dir, ignore_errors=True)
-        logger.info("ChromaDB cleaned (before test)")
+        # Retry loop: on Windows, SQLite WAL locks may persist briefly after GC
+        for attempt in range(5):
+            try:
+                shutil.rmtree(chroma_dir)
+                logger.info("ChromaDB cleaned (before test)")
+                break
+            except PermissionError:
+                if attempt < 4:
+                    time.sleep(0.2 * (attempt + 1))
+                else:
+                    logger.warning(
+                        "ChromaDB cleanup: could not fully remove after 5 attempts "
+                        "(Windows file lock). Test may see stale data."
+                    )
 
     yield  # Test runs here
 

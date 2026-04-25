@@ -403,16 +403,6 @@ def test_performance_100_items(
 
 @pytest.mark.e2e
 @pytest.mark.slow
-@pytest.mark.skip(
-    reason="CRITICAL - ChromaDB 'Error finding id' corruption (same as test_workflow_with_low_threshold). "
-    "Issue: One of the 3 sequential jobs fails with 'Vector database query failed: Error finding id'. "
-    "Root cause: ChromaDB index corruption between multiple job runs. "
-    "Possibly related to: (1) clean_chromadb fixture not effective between sequential jobs in same test, "
-    "(2) ChromaDBClientSingleton caching stale index state, "
-    "(3) Windows SQLite file locks preventing proper cleanup. "
-    "TODO: Same fix as test_workflow_with_low_threshold - robust ChromaDB cleanup or in-memory DB for tests. "
-    "See: Celery logs 'Job 3459ffd9-d52e-4b42-bd2e-3074ade83816 marked as failed'"
-)
 def test_performance_memory_leak_check(
     test_client,
     performance_files,
@@ -443,8 +433,6 @@ def test_performance_memory_leak_check(
     logger.info("=" * 80)
 
     # Use smaller sample files for quick iterations
-    from tests.conftest import Path
-
     fixtures_dir = Path(__file__).parent.parent / "fixtures"
     sample_working = fixtures_dir / "sample_working_file.xlsx"
     sample_reference = fixtures_dir / "sample_reference_file.xlsx"

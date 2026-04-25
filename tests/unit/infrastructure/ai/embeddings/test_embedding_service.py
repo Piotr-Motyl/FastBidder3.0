@@ -8,7 +8,7 @@ import pytest
 from unittest.mock import Mock, patch, MagicMock
 import numpy as np
 
-from src.infrastructure.ai.embeddings.embedding_service import EmbeddingService
+from src.infrastructure.ai.embeddings.embedding_service import EmbeddingService, EmbeddingServiceSingleton
 
 
 # ============================================================================
@@ -405,3 +405,75 @@ def test_similarity_returns_float():
     service = EmbeddingService.__new__(EmbeddingService)
     result = service.similarity([1.0, 0.0], [0.0, 1.0])
     assert isinstance(result, float)
+
+
+# ============================================================================
+# SINGLETON TESTS
+# ============================================================================
+
+
+def test_singleton_returns_same_instance():
+    """Two get_instance() calls return the same object."""
+    EmbeddingServiceSingleton.reset_instance()
+    try:
+        a = EmbeddingServiceSingleton.get_instance()
+        b = EmbeddingServiceSingleton.get_instance()
+        assert a is b
+    finally:
+        EmbeddingServiceSingleton.reset_instance()
+
+
+def test_singleton_reset_creates_new_instance():
+    """After reset_instance(), get_instance() returns a fresh object."""
+    EmbeddingServiceSingleton.reset_instance()
+    try:
+        first = EmbeddingServiceSingleton.get_instance()
+        EmbeddingServiceSingleton.reset_instance()
+        second = EmbeddingServiceSingleton.get_instance()
+        assert first is not second
+    finally:
+        EmbeddingServiceSingleton.reset_instance()
+
+
+def test_singleton_instance_is_embedding_service():
+    """get_instance() returns an EmbeddingService instance."""
+    EmbeddingServiceSingleton.reset_instance()
+    try:
+        instance = EmbeddingServiceSingleton.get_instance()
+        assert isinstance(instance, EmbeddingService)
+    finally:
+        EmbeddingServiceSingleton.reset_instance()
+
+
+def test_singleton_custom_model_name_forwarded():
+    """Custom model_name is forwarded to the underlying EmbeddingService."""
+    EmbeddingServiceSingleton.reset_instance()
+    try:
+        custom_model = "all-MiniLM-L6-v2"
+        instance = EmbeddingServiceSingleton.get_instance(model_name=custom_model)
+        assert instance.model_name == custom_model
+    finally:
+        EmbeddingServiceSingleton.reset_instance()
+
+
+def test_singleton_thread_safe():
+    """Concurrent get_instance() calls return the same instance."""
+    import threading
+
+    EmbeddingServiceSingleton.reset_instance()
+    try:
+        results = []
+
+        def _get():
+            results.append(EmbeddingServiceSingleton.get_instance())
+
+        threads = [threading.Thread(target=_get) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(results) == 10
+        assert all(r is results[0] for r in results)
+    finally:
+        EmbeddingServiceSingleton.reset_instance()

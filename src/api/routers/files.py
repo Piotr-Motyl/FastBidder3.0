@@ -28,7 +28,6 @@ Phase 2 Note:
 """
 
 import logging
-import os
 from typing import Any, Dict, Optional, Literal
 
 from fastapi import APIRouter, status, HTTPException, Depends, UploadFile, File, Query
@@ -194,39 +193,28 @@ router = APIRouter(
 # ============================================================================
 
 
-async def get_file_upload_use_case():
+async def get_file_upload_use_case(
+    file_type: Literal["working", "reference"] = Query(default="working"),
+):
     """
     Dependency injection for FileUploadUseCase.
 
+    Reads file_type from the query string so it can decide whether to initialise
+    the ReferenceIndexer.  ReferenceIndexer is only created for reference-file
+    uploads — working-file uploads skip AI initialisation entirely.
+
+    Indexing is always attempted for reference files regardless of the
+    USE_AI_MATCHING env-var (which controls only which engine the Celery task
+    uses at match time, not whether the upload is indexed).
+
     Returns:
         FileUploadUseCase: Application Layer use case for file upload
-
-    Note:
-        Implementation in Phase 3 (Task 3.4.1).
-        Will inject actual use case with all its dependencies:
-        - FileStorageService for file operations
-        - Configuration for max file size and allowed extensions
-
-    The use case will:
-    - Generate unique file_id (UUID4)
-    - Validate file extension and size
-    - Save file to /tmp/fastbidder/uploads/{file_id}/
-    - Extract metadata (sheets, rows, columns)
-    - Extract preview (first 5 rows)
-    - Return FileUploadResult
     """
-    # Create FileStorageService instance
     file_storage = FileStorageService()
-
-    # Phase 4: Check if AI matching is enabled
-    use_ai_matching = os.getenv("USE_AI_MATCHING", "false").lower() == "true"
     reference_indexer = None
 
-    if use_ai_matching:
+    if file_type == "reference":
         try:
-            # Initialize AI components for reference file indexing
-            logger.info("USE_AI_MATCHING=true detected - initializing ReferenceIndexer")
-
             from src.infrastructure.ai.embeddings.embedding_service import (
                 EmbeddingService,
             )
@@ -237,24 +225,18 @@ async def get_file_upload_use_case():
                 ReferenceIndexer,
             )
 
-            # Initialize AI services
             embedding_service = EmbeddingService()
             chroma_client = ChromaClientSingleton.get_instance()
-
-            # Create ReferenceIndexer
             reference_indexer = ReferenceIndexer(embedding_service, chroma_client)
-            logger.info("ReferenceIndexer initialized successfully")
+            logger.info("ReferenceIndexer initialised for reference file upload")
 
         except Exception as e:
-            # Log warning but don't fail - file upload will work without indexing
             logger.warning(
-                f"Failed to initialize ReferenceIndexer (AI matching disabled): {e}"
+                f"Failed to initialise ReferenceIndexer — file will be uploaded "
+                f"but not indexed for AI matching: {e}"
             )
             reference_indexer = None
-    else:
-        logger.info("AI matching disabled (USE_AI_MATCHING=false) - ReferenceIndexer not initialized")
 
-    # Create and return FileUploadUseCase with injected dependencies
     return FileUploadUseCase(file_storage=file_storage, reference_indexer=reference_indexer)
 
 

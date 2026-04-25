@@ -1021,30 +1021,113 @@ make evaluate
 
 ### E2E Test Stability (8 tests skipped)
 
-**Issue**: ChromaDB persistence issues on Windows causing test failures
+**Impact**: Unit and integration tests provide 88% coverage.
+E2E issues affect test stability on Windows only — production functionality is unaffected.
 
-**Root Causes Documented**:
-1. **ChromaDB "Error finding id" corruption** (2 tests)
-   - Stale IDs in index after cleanup
-   - Windows SQLite file locks preventing proper cleanup
-   - TODO: Implement in-memory ChromaDB for tests or robust cleanup with retry logic
+**Recommended fix order**: Issue 1 → Issue 2 → Issue 4 (auto-resolves) → Issue 3
 
-2. **0% Match rate / retrieval returns 0 results** (2 tests)
-   - `file_id` filter mismatch between indexing and retrieval
-   - ChromaDB query filters not matching indexed metadata
-   - TODO: Debug `semantic_retriever.py` query logic and `reference_indexer.py` consistency
+---
 
-3. **Performance timeout >120s** (1 test)
-   - 100-item matching exceeds performance target
-   - Model loading overhead (~3-5s per worker fork)
-   - TODO: Pre-load embedding model in worker startup, implement batch embeddings
+#### Issue 1 — ChromaDB "Error finding id" corruption
+**Tests affected**: `test_workflow_with_low_threshold`, `test_performance_memory_leak_check`
+**Complexity**: 🟢 LOW
 
-4. **Memory leak check** (1 test)
-   - Sequential jobs fail with ChromaDB corruption
-   - Same root cause as "Error finding id" issue
-   - TODO: Same fix - robust cleanup or in-memory DB
+**Root cause** (`tests/conftest.py`, `clean_chromadb` fixture):
+```python
+ChromaClientSingleton.reset_instance()          # releases Python reference
+shutil.rmtree(chroma_dir, ignore_errors=True)   # SILENTLY FAILS on Windows
+```
+On Windows, Python GC is lazy — the ChromaDB client holds the SQLite WAL file open even after
+`reset_instance()`. `ignore_errors=True` swallows the `PermissionError`, leaving stale
+`chroma.sqlite3` on disk. The next test opens a new client against corrupted state (SQL metadata
+references Parquet segment files that were partially deleted), causing "Error finding id".
 
-**Impact**: Unit and integration tests provide 88% coverage. E2E issues do not affect production functionality (only test stability on Windows).
+**Fix** (`tests/conftest.py`):
+```python
+import gc, time
+ChromaClientSingleton.reset_instance()
+gc.collect()          # force Python to release file handles
+time.sleep(0.1)       # let OS release locks
+for attempt in range(5):
+    try:
+        if chroma_dir.exists():
+            shutil.rmtree(chroma_dir)
+        break
+    except PermissionError:
+        time.sleep(0.2 * (attempt + 1))
+```
+
+---
+
+#### Issue 2 — 0% match rate (ChromaDB returns 0 results)
+**Tests affected**: `test_polish_characters_in_descriptions`, `test_minimum_viable_input_single_item`
+**Complexity**: 🟡 MEDIUM (3 stacked bugs)
+
+**Root cause A — reference file never indexed** (`src/api/routers/files.py`):
+```python
+use_ai_matching = os.getenv("USE_AI_MATCHING", "false").lower() == "true"
+if use_ai_matching:
+    reference_indexer = ReferenceIndexer(...)
+else:
+    reference_indexer = None   # upload works, but nothing goes into ChromaDB
+```
+With `USE_AI_MATCHING=false` (default), `FileUploadUseCase` sets `indexing_status="skipped"`.
+The Celery task (also gated by `USE_AI_MATCHING`) then tries to query an empty ChromaDB.
+Celery log evidence: `Retrieved 0 results (filters: True, top_k: 20)`.
+
+**Fix A**: Set `USE_AI_MATCHING=true` in `.env` (or the test environment) for E2E tests,
+or split the gate — always index on upload when `file_type=reference`, regardless of `USE_AI_MATCHING`.
+
+**Root cause B — wrong column extracted during indexing** (`src/application/services/file_upload_use_case.py`):
+```python
+first_column = df.columns[0]   # always column A = "Lp" (integers 1, 2, 3...)
+```
+Fixture files have descriptions in column **B** (index 1). Column A contains row numbers ("1", "2"...)
+which are 1–2 chars long and get silently skipped (`len < 3` guard in `HVACDescription`).
+Result: `indexed_count = 0` even if `USE_AI_MATCHING=true`.
+
+**Fix B**: Pass `description_column` to `_extract_descriptions_from_file`, or add a
+`description_column` parameter to the `/files/upload` endpoint and forward it to the use case.
+
+**Root cause C — dn/pn filter chain** (secondary, only visible after A+B are fixed):
+`HybridMatchingEngine._retrieve_candidates()` builds a `{"dn": "50", "pn": "16", "file_id": "..."}` filter.
+If no document matches ALL three criteria, it falls back to `file_id`-only filter. This fallback works
+correctly once ChromaDB is populated. No code change needed — this is expected behaviour.
+
+---
+
+#### Issue 3 — Performance timeout >120s
+**Tests affected**: `test_performance_100_items`
+**Complexity**: 🔴 MEDIUM-HIGH
+
+**Root cause**:
+- `EmbeddingService` (sentence-transformers) loads the 500 MB `paraphrase-multilingual-MiniLM-L12-v2`
+  model fresh on every Celery task start — ~30–60 s on first call.
+- No batch embedding: `SimpleMatchingEngine.match_single()` embeds one description per call.
+  100 items × Stage-1 retrieval (~150 ms each) = ~15 s + 100 × Stage-2 scoring (~80 ms) = ~8 s.
+  Total (with model loading) easily exceeds 120 s.
+
+**Fix**:
+1. Add `EmbeddingServiceSingleton` (mirror of existing `ChromaClientSingleton`) so the model loads
+   once per worker process and is reused across tasks.
+2. Pre-warm the singleton at worker startup (Celery `worker_init` signal).
+3. Optional: implement `match_batch()` to embed all working descriptions in one
+   `embed_batch()` call before the matching loop (reduces N × 150 ms to 1 × 200 ms).
+
+---
+
+#### Issue 4 — Sequential job failures (memory / state leak)
+**Tests affected**: `test_performance_memory_leak_check`
+**Complexity**: 🟢 LOW (downstream of Issue 1)
+
+**Root cause**: Three sequential matching jobs share one Celery worker process (`--pool=solo`).
+After job 1, the `clean_chromadb` fixture silently fails (Issue 1) → job 2 opens corrupted ChromaDB →
+"Error finding id" → task exception → Celery retries → timeout.
+The sentence-transformers model (~500 MB) stays resident between jobs (expected, not a leak).
+
+**Fix**: Resolves automatically once Issue 1 is fixed. No additional changes needed.
+
+---
 
 ### ✅ Resolved: Celery worker hang on Windows
 

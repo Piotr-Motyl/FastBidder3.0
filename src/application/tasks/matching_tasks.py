@@ -275,12 +275,12 @@ def process_matching_task(
 
         if use_ai_matching:
             try:
-                from src.infrastructure.ai.embeddings.embedding_service import EmbeddingService
+                from src.infrastructure.ai.embeddings.embedding_service import EmbeddingServiceSingleton
                 from src.infrastructure.ai.vector_store.chroma_client import ChromaClientSingleton
                 from src.infrastructure.ai.retrieval.semantic_retriever import SemanticRetriever
                 from src.infrastructure.matching.hybrid_matching_engine import HybridMatchingEngine
 
-                embedding_service = EmbeddingService()
+                embedding_service = EmbeddingServiceSingleton.get_instance()
                 chroma_client = ChromaClientSingleton.get_instance()
                 semantic_retriever = SemanticRetriever(embedding_service, chroma_client)
                 simple_engine = SimpleMatchingEngine(parameter_extractor, config, embedding_service)

@@ -558,17 +558,6 @@ def test_workflow_with_invalid_files(test_client, clean_redis, clean_chromadb, d
 
 @pytest.mark.e2e
 @pytest.mark.slow
-@pytest.mark.skip(
-    reason="CRITICAL - ChromaDB 'Error finding id' corruption. "
-    "Issue: Job fails with 'Vector database query failed: Error executing plan: Internal error: Error finding id'. "
-    "Root cause: ChromaDB has stale IDs in index that don't exist in database after cleanup. "
-    "Possibly related to: (1) clean_chromadb fixture timing issue (directory removed but SQLite still has handles), "
-    "(2) ChromaDB internal index corruption on Windows, "
-    "(3) Multiple test runs without proper cleanup leaving orphaned IDs. "
-    "TODO: Investigate ChromaDB persistence layer and Windows file lock issues. "
-    "Consider migrating to in-memory ChromaDB for tests or implementing more robust cleanup with retry logic. "
-    "See: Celery logs '[2026-01-03 20:38:14,414: ERROR] ChromaDB query failed: Error executing plan'"
-)
 def test_workflow_with_low_threshold(
     test_client,
     sample_files,

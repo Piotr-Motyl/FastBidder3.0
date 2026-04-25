@@ -10,6 +10,7 @@ Uses sentence-transformers library for embedding generation with support for:
 from __future__ import annotations
 
 import logging
+import threading
 import numpy as np
 from typing import TYPE_CHECKING
 
@@ -233,3 +234,65 @@ class EmbeddingService:
         if norm_a == 0 or norm_b == 0:
             return 0.0
         return float(np.dot(a, b) / (norm_a * norm_b))
+
+
+class EmbeddingServiceSingleton:
+    """
+    Thread-safe Singleton wrapper for EmbeddingService.
+
+    Ensures only one EmbeddingService (and therefore one loaded ML model) exists
+    throughout the application/worker lifecycle. Critical for Celery workers running
+    with --pool=solo: without this, every task creates a fresh EmbeddingService and
+    re-loads the ~420MB sentence-transformers model (~30-60s per task).
+
+    Mirrors the ChromaClientSingleton pattern from chroma_client.py.
+
+    Example:
+        >>> service = EmbeddingServiceSingleton.get_instance()
+        >>> embedding = service.embed_single("Zawór kulowy DN50")
+        >>>
+        >>> # Returns same instance (model already loaded)
+        >>> same = EmbeddingServiceSingleton.get_instance()
+        >>> assert service is same
+        >>>
+        >>> # Reset for testing only
+        >>> EmbeddingServiceSingleton.reset_instance()
+    """
+
+    _instance: EmbeddingService | None = None
+    _lock = threading.Lock()
+
+    @classmethod
+    def get_instance(cls, model_name: str | None = None) -> EmbeddingService:
+        """
+        Get or create the singleton EmbeddingService instance.
+
+        Thread-safe lazy initialization using double-checked locking.
+        First call creates instance; subsequent calls return existing instance.
+        Model is still lazy-loaded on first embed call (not here).
+
+        Args:
+            model_name: Optional model override. Only used on first call.
+
+        Returns:
+            EmbeddingService singleton instance.
+        """
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = EmbeddingService(model_name=model_name)
+                    logger.info("EmbeddingService singleton instance created")
+        return cls._instance
+
+    @classmethod
+    def reset_instance(cls) -> None:
+        """
+        Reset the singleton instance (for testing purposes only).
+
+        Releases the loaded model so the next get_instance() call creates a fresh one.
+        WARNING: Do not call in production — causes full model reload on next use.
+        """
+        with cls._lock:
+            if cls._instance is not None:
+                cls._instance = None
+                logger.warning("EmbeddingService singleton instance reset (testing only)")
