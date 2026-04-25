@@ -155,15 +155,22 @@ class ProcessMatchingService:
             report_col_idx = excel_column_to_index(working_file["matching_report_column"])
             report_results = [None] * n_rows
 
-        wf_descriptions = []
+        wf_descriptions: list[Optional[HVACDescription]] = []
         for text in wf_raw_texts:
-            desc = HVACDescription(raw_text=str(text) if text else "")
+            text_str = str(text).strip() if text is not None else ""
+            if len(text_str) < 3:
+                wf_descriptions.append(None)
+                continue
+            desc = HVACDescription(raw_text=text_str)
             desc.extract_parameters(self._parameter_extractor)
             wf_descriptions.append(desc)
 
         ref_descriptions = []
         for text, price in zip(ref_raw_texts, ref_prices):
-            desc = HVACDescription(raw_text=str(text) if text else "")
+            text_str = str(text).strip() if text is not None else ""
+            if len(text_str) < 3:
+                continue
+            desc = HVACDescription(raw_text=text_str)
             desc.extract_parameters(self._parameter_extractor)
             if price and price != "":
                 desc.matched_price = Decimal(str(price))
@@ -176,6 +183,9 @@ class ProcessMatchingService:
         rows_matched = 0
 
         for wf_idx, wf_desc in enumerate(wf_descriptions):
+            if wf_desc is None:
+                rows_processed += 1
+                continue
             if self._using_ai:
                 assert self._ai_event_loop is not None
                 match_result = self._ai_event_loop.run_until_complete(
