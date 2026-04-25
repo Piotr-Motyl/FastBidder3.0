@@ -277,7 +277,7 @@ celery-worker:
 	echo "📝 Celery log: $$LOG_FILE"; \
 	echo "💡 Log is also written to file — use 'cat $$LOG_FILE' to review"; \
 	echo ""; \
-	poetry run celery -A src.application.tasks.celery_app worker --loglevel=info 2>&1 | tee "$$LOG_FILE"
+	poetry run celery -A src.application.tasks.celery_app worker --loglevel=info --pool=solo 2>&1 | tee "$$LOG_FILE"
 
 celery-flower:
 	poetry run celery -A src.application.tasks.celery_app flower --port=5555

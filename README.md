@@ -57,14 +57,12 @@ Phase 2: Detailed Contracts   ✅ Done
 Phase 3: Implementation       ✅ Done 
 Phase 4: AI Integration       ✅ Done 
 Phase 5: Advanced Features    ⏳ TODO in future (Fine-tuning, optimization, etc.)
-Phase 6: Testing & Coverage   ✅ Done (886 tests passing, 84% coverage, Unit+Integration+E2E)
+Phase 6: Testing & Coverage   ✅ Done (900 tests passing, 88% coverage, Unit+Integration+E2E)
 ```
-
-**Phase 4 Completed:** Two-stage hybrid matching (ChromaDB retrieval + SimpleMatchingEngine scoring), Golden Dataset evaluation framework, Threshold tuning tools, API schema updates for AI fields.
-
-**Phase 6 Completed:** Comprehensive test suite with 886 passing tests achieving 84% overall coverage across all layers.
-
-**Future Steps:** Phase 5 - Fine-tuning (optional, when golden dataset reaches 500+ pairs)
+**Future Steps:** Phase 5 
+  - Fine-tuning (optional, when golden dataset reaches 500+ pairs)
+  - Claude API
+  - and more (preparing plan)
 
 ---
 
@@ -438,6 +436,7 @@ fastbidder/
 │   │   │   └── __init__.py
 │   │   ├── services/
 │   │   │   ├── process_matching_use_case.py  # Main orchestration
+│   │   │   ├── matching_service.py           # ProcessMatchingService (core logic, unit-testable)
 │   │   │   ├── file_upload_use_case.py       # File validation
 │   │   │   └── __init__.py
 │   │   ├── tasks/
@@ -490,8 +489,9 @@ fastbidder/
 │   │   │   ├── excel_writer.py               # openpyxl-based writer
 │   │   │   └── __init__.py
 │   │   ├── matching/
-│   │   │   ├── hybrid_matching_engine.py     # HybridMatchingEngine (Phase 4)
-│   │   │   ├── matching_engine.py            # Base implementation
+│   │   │   ├── hybrid_matching_engine.py        # HybridMatchingEngine (Phase 4)
+│   │   │   ├── concrete_parameter_extractor.py  # ConcreteParameterExtractor (regex-based)
+│   │   │   ├── matching_engine.py               # Base implementation
 │   │   │   └── __init__.py
 │   │   ├── ai/                       # 🤖 AI/ML Infrastructure (Phase 4)
 │   │   │   ├── embeddings/
@@ -510,9 +510,9 @@ fastbidder/
 │       └── __init__.py
 │
 ├── tests/
-│   ├── unit/                         # Unit tests (886 tests)
+│   ├── unit/                         # Unit tests (889 tests)
 │   ├── integration/                  # Integration tests (AI pipeline)
-│   └── e2e/                          # End-to-end tests (6 skipped)
+│   └── e2e/                          # End-to-end tests (8 skipped)
 │
 ├── docker/
 │   ├── Dockerfile
@@ -654,6 +654,7 @@ Legend:
 | `commands/process_matching.py` | CQRS Write command | ✅ Implemented | `ProcessMatchingCommand` |
 | `queries/get_job_status.py` | CQRS Read query + handler | ✅ Implemented | `GetJobStatusQuery`, `JobStatusResult` |
 | `services/process_matching_use_case.py` | Orchestrates matching flow | ✅ Implemented | `ProcessMatchingUseCase` |
+| `services/matching_service.py` | Core matching pipeline, unit-testable | ✅ Implemented | `ProcessMatchingService`, `MatchingResult` |
 | `services/file_upload_use_case.py` | File validation & storage | ✅ Implemented | `FileUploadUseCase` |
 | `tasks/celery_app.py` | Celery configuration | ✅ Implemented | `celery_app`, `health_check` |
 | `tasks/matching_tasks.py` | Async matching task | ✅ Implemented | `process_matching_task` |
@@ -690,6 +691,7 @@ Legend:
 | `file_storage/excel_reader.py` | Excel parsing (Polars) | ✅ Implemented | `ExcelReaderService` |
 | `file_storage/excel_writer.py` | Excel generation (openpyxl) | ✅ Implemented | `ExcelWriterService` |
 | `matching/hybrid_matching_engine.py` | Hybrid matching implementation | ✅ Implemented | `HybridMatchingEngine` |
+| `matching/concrete_parameter_extractor.py` | Parameter extraction (regex, DN/PN/material) | ✅ Implemented | `ConcreteParameterExtractor` |
 | `matching/matching_engine.py` | Base matching implementation | ✅ Implemented | `MatchingEngine` |
 | `ai/embeddings/embedding_service.py` | Sentence transformers wrapper | ✅ Implemented | `EmbeddingService` |
 | `ai/retrieval/semantic_retriever.py` | Semantic search | ✅ Implemented | `SemanticRetriever` |
@@ -756,7 +758,7 @@ All commands available via **Makefile** (26 make targets):
 ```bash
 make install        # Install dependencies with Poetry
 make run            # Run FastAPI locally (with hot reload)
-make celery-worker  # Run Celery worker locally
+make celery-worker  # Run Celery worker locally (--pool=solo, Windows-compatible)
 make celery-flower  # Run Flower UI locally (monitoring)
 make lint           # Run linters (flake8 + mypy)
 make format         # Format code (black + isort)
@@ -931,22 +933,22 @@ make evaluate
 
 ## 📊 Test Coverage
 
-**Overall Coverage**: **84%** (886 passing tests)
+**Overall Coverage**: **88%** (900 passing tests)
 
 ### By Layer
 
 - **Domain Layer**: 95%+ (value objects, entities, services with comprehensive unit tests)
 - **Infrastructure Layer**: 89%+ (file storage, AI components, vector DB integration)
-- **Application Layer**: 44-91% (use cases, tasks, commands/queries)
+- **Application Layer**: 88%+ (use cases, tasks, commands/queries — boosted by ProcessMatchingService extraction)
 - **API Layer**: 48-64% (routers, schemas, request/response handling)
 
 ### Test Categories
 
 | Category | Count | Status | Notes |
 |----------|-------|--------|-------|
-| **Unit tests** | 873 | ✅ Passing | Fast, isolated, no external dependencies |
-| **Integration tests** | 13 | ✅ Passing | Real AI pipeline (sentence-transformers + ChromaDB) |
-| **E2E tests** | 6 | ⚠️ Skipped | Known ChromaDB issues on Windows (documented) |
+| **Unit tests** | 889 | ✅ Passing | Fast, isolated, no external dependencies |
+| **Integration tests** | 11 | ✅ Passing | Real AI pipeline (sentence-transformers + ChromaDB) |
+| **E2E tests** | 8 | ⚠️ Skipped | Known ChromaDB issues on Windows (documented) |
 
 ### Key Coverage Highlights
 
@@ -959,6 +961,7 @@ make evaluate
 - `excel_reader.py`: 93% - Excel parsing with Polars
 - `excel_writer.py`: 91% - Excel generation with openpyxl
 - `hybrid_matching_engine.py`: 89% - Two-stage pipeline implementation
+- `matching_service.py`: 88% - Core matching pipeline (ProcessMatchingService)
 - All value objects: 98-100% - Immutable data validation
 
 **Strategic Coverage Approach**:
@@ -1016,7 +1019,7 @@ make evaluate
 
 ## 🐛 Known Issues
 
-### E2E Test Stability (6 tests skipped)
+### E2E Test Stability (8 tests skipped)
 
 **Issue**: ChromaDB persistence issues on Windows causing test failures
 
@@ -1041,7 +1044,15 @@ make evaluate
    - Same root cause as "Error finding id" issue
    - TODO: Same fix - robust cleanup or in-memory DB
 
-**Impact**: Unit and integration tests provide 84% coverage. E2E issues do not affect production functionality (only test stability on Windows).
+**Impact**: Unit and integration tests provide 88% coverage. E2E issues do not affect production functionality (only test stability on Windows).
+
+### ✅ Resolved: Celery worker hang on Windows
+
+**Was**: Default `prefork` pool uses `billiard` with `spawn` mode on Windows (no `os.fork()`).
+Child processes received tasks but hung at 0% CPU — jobs never progressed beyond `QUEUED`.
+
+**Fix**: `make celery-worker` now uses `--pool=solo` (single-threaded, Windows-compatible).
+Direct command: `poetry run celery -A src.application.tasks.celery_app worker --loglevel=info --pool=solo`
 
 **See Test Files**:
 - [test_performance.py](tests/e2e/test_performance.py) - Performance tests with detailed skip reasons
