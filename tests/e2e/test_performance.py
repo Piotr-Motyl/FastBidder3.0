@@ -290,6 +290,7 @@ def test_performance_100_items(
 
     # Poll with performance monitoring
     last_log_time = time.time()
+    processing_duration = 0.0  # initialized before loop — assigned on completed branch
     while True:
         # Check timeout
         elapsed = time.time() - start_time
@@ -321,15 +322,15 @@ def test_performance_100_items(
             )
             last_log_time = time.time()
 
-        # Check if completed
-        if status == "COMPLETED":
+        # Check if completed — API returns lowercase status values (JobStatus enum)
+        if status == "completed":
             processing_duration = time.time() - processing_start
             logger.info(f"Job completed after {processing_duration:.2f}s")
             break
 
-        # Check if failed
-        if status == "FAILED":
-            error_message = data.get("progress", {}).get("error", "Unknown error")
+        # Check if failed — API returns lowercase status values (JobStatus enum)
+        if status == "failed":
+            error_message = data.get("error_details", "Unknown error")
             raise AssertionError(f"Job failed: {error_message}")
 
         # Wait before next poll
