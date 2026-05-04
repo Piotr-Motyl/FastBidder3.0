@@ -223,6 +223,7 @@ def test_polish_characters_in_descriptions(
 
     wb = openpyxl.load_workbook(BytesIO(result_bytes))
     ws = wb.active
+    assert ws is not None, "Workbook has no active sheet"
 
     # Get column indices using helper function
     headers = [cell.value for cell in ws[1]]
@@ -236,12 +237,12 @@ def test_polish_characters_in_descriptions(
     price_row_2 = ws.cell(2, price_col).value
     score_row_2 = ws.cell(2, score_col).value
 
-    assert desc_row_2 is not None, "Row 2 description is empty"
+    assert isinstance(desc_row_2, str), f"Row 2 description should be str, got: {type(desc_row_2)}"
     assert "Zawór" in desc_row_2, f"Polish 'ó' missing in description: {desc_row_2}"
     assert "mosiądz" in desc_row_2, f"Polish 'ą' missing in description: {desc_row_2}"
     assert price_row_2 is not None, "Row 2 should have price (matched)"
-    assert score_row_2 is not None, "Row 2 should have match score"
-    assert float(score_row_2) >= MIN_ACCEPTABLE_SCORE, f"Row 2 score too low: {score_row_2}"
+    assert isinstance(score_row_2, (int, float)), f"Row 2 score should be numeric, got: {type(score_row_2)}"
+    assert score_row_2 >= MIN_ACCEPTABLE_SCORE, f"Row 2 score too low: {score_row_2}"
     logger.info(f"✓ Row 2: Price={price_row_2}, Score={score_row_2}")
 
     # Check row 3: "Zawór zwrotny DN80 PN10 żeliwo szare"
@@ -250,11 +251,11 @@ def test_polish_characters_in_descriptions(
     price_row_3 = ws.cell(3, price_col).value
     score_row_3 = ws.cell(3, score_col).value
 
-    assert desc_row_3 is not None, "Row 3 description is empty"
+    assert isinstance(desc_row_3, str), f"Row 3 description should be str, got: {type(desc_row_3)}"
     assert "żeliwo" in desc_row_3, f"Polish 'ż' missing in description: {desc_row_3}"
     assert price_row_3 is not None, "Row 3 should have price (matched)"
-    assert score_row_3 is not None, "Row 3 should have match score"
-    assert float(score_row_3) >= MIN_ACCEPTABLE_SCORE, f"Row 3 score too low: {score_row_3}"
+    assert isinstance(score_row_3, (int, float)), f"Row 3 score should be numeric, got: {type(score_row_3)}"
+    assert score_row_3 >= MIN_ACCEPTABLE_SCORE, f"Row 3 score too low: {score_row_3}"
     logger.info(f"✓ Row 3: Price={price_row_3}, Score={score_row_3}")
 
     # Check row 4: "Kompensator długości DN100 stal nierdzewna"
@@ -263,11 +264,11 @@ def test_polish_characters_in_descriptions(
     price_row_4 = ws.cell(4, price_col).value
     score_row_4 = ws.cell(4, score_col).value
 
-    assert desc_row_4 is not None, "Row 4 description is empty"
+    assert isinstance(desc_row_4, str), f"Row 4 description should be str, got: {type(desc_row_4)}"
     assert "długości" in desc_row_4, f"Polish 'ł' and 'ś' missing in description: {desc_row_4}"
     assert price_row_4 is not None, "Row 4 should have price (matched)"
-    assert score_row_4 is not None, "Row 4 should have match score"
-    assert float(score_row_4) >= MIN_ACCEPTABLE_SCORE, f"Row 4 score too low: {score_row_4}"
+    assert isinstance(score_row_4, (int, float)), f"Row 4 score should be numeric, got: {type(score_row_4)}"
+    assert score_row_4 >= MIN_ACCEPTABLE_SCORE, f"Row 4 score too low: {score_row_4}"
     logger.info(f"✓ Row 4: Price={price_row_4}, Score={score_row_4}")
 
     # Final validation
@@ -417,6 +418,7 @@ def test_minimum_viable_input_single_item(
 
     wb = openpyxl.load_workbook(BytesIO(result_bytes))
     ws = wb.active
+    assert ws is not None, "Workbook has no active sheet"
 
     # Check exactly 2 rows (1 header + 1 data)
     actual_rows = ws.max_row
@@ -436,8 +438,8 @@ def test_minimum_viable_input_single_item(
 
     assert desc is not None, "Row 2 description is empty"
     assert price is not None, "Row 2 price is empty (no match?)"
-    assert score is not None, "Row 2 score is empty"
-    assert float(score) >= MIN_ACCEPTABLE_SCORE, f"Score too low: {score}"
+    assert isinstance(score, (int, float)), f"Row 2 score should be numeric, got: {type(score)}"
+    assert score >= MIN_ACCEPTABLE_SCORE, f"Score too low: {score}"
 
     # Final validation
     logger.info("\n" + "=" * 80)

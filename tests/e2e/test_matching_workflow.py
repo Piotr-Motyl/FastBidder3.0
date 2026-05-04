@@ -302,6 +302,7 @@ def validate_output_file(file_bytes: bytes, min_success_rate: float = MIN_SUCCES
     # Load Excel file
     wb = openpyxl.load_workbook(BytesIO(file_bytes))
     ws = wb.active
+    assert ws is not None, "Workbook has no active sheet"
 
     # Get header row
     headers = [cell.value for cell in ws[1]]
