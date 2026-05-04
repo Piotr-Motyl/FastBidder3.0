@@ -142,32 +142,6 @@ Redis: ✅ Running
 Celery Worker: ❌ Not running (run: make celery-worker in separate terminal)
 ```
 
----
-
-## Understanding Poetry Virtual Environment
-
-### How Poetry Works
-
-```
-┌─────────────────────────────────────────┐
-│  Your Project Directory                 │
-│  /mnt/d/.../fastbidder/                 │
-│                                          │
-│  ┌────────────────────────────────┐    │
-│  │  .venv/  (Virtual Environment)  │    │
-│  │  ├── bin/python                 │    │
-│  │  ├── lib/python3.10/            │    │
-│  │  │   ├── chromadb/              │    │
-│  │  │   ├── sentence-transformers/ │    │
-│  │  │   ├── fastapi/               │    │
-│  │  │   └── ... (all dependencies) │    │
-│  └────────────────────────────────┘    │
-│                                          │
-│  pyproject.toml  (dependency list)      │
-│  poetry.lock     (exact versions)       │
-└─────────────────────────────────────────┘
-```
-
 ### Key Points
 
 1. **Single Environment**: Poetry creates ONE `.venv` directory
@@ -316,6 +290,3 @@ make test-e2e      # Before committing
 - Celery documentation: https://docs.celeryproject.org/
 - pytest documentation: https://docs.pytest.org/
 
----
-
-**Questions?** Check [CLAUDE.md](CLAUDE.md) for project-specific instructions or consult the team.
