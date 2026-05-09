@@ -1,31 +1,13 @@
 """
-Progress Tracker Protocol
-
-Defines the interface that Infrastructure Layer must implement
-for job progress tracking. Used by Application Layer use cases and API layer.
-
-Architecture Notes:
-    - Part of Application Layer (Ports/Interfaces)
-    - Implements Dependency Inversion Principle (SOLID)
-    - Infrastructure Layer provides concrete implementation (RedisProgressTracker)
-    - Enables easy testing with mock implementations
+Progress Tracker Protocol — interface implemented by Infrastructure
+(RedisProgressTracker). Used by Application Layer use cases and Celery tasks.
 """
 
 from typing import Optional, Protocol
 
 
 class ProgressTrackerProtocol(Protocol):
-    """
-    Protocol (interface) for job progress tracking.
-
-    Defines the contract that Infrastructure Layer's RedisProgressTracker
-    must implement. Follows Dependency Inversion Principle.
-
-    Used by:
-        - ProcessMatchingUseCase: to initialize job status before Celery task
-        - GetJobStatusQueryHandler: to retrieve current job status
-        - Celery task: to update progress during processing
-    """
+    """Interface for job progress tracking. Concrete impl: RedisProgressTracker."""
 
     def start_job(
         self,
@@ -33,19 +15,22 @@ class ProgressTrackerProtocol(Protocol):
         message: str = "Job started",
         total_items: int = 0,
     ) -> None:
-        """Initialize job entry with QUEUED status."""
+        """Initialize job entry with QUEUED/PROCESSING status."""
         ...
 
     def update_progress(
         self,
         job_id: str,
         progress: int,
-        message: str = "",
-        current_step: Optional[str] = None,
-        items_processed: Optional[int] = None,
-        items_matched: Optional[int] = None,
+        message: str,
+        current_item: int = 0,
+        total_items: int = 0,
+        stage: str = "",
+        eta_seconds: int = 0,
+        memory_mb: float = 0.0,
+        errors: Optional[list[str]] = None,
     ) -> None:
-        """Update job progress percentage and status message."""
+        """Update job progress percentage with extended metadata."""
         ...
 
     def complete_job(

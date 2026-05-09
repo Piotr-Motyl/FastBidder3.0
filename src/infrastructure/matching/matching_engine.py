@@ -9,7 +9,6 @@ Hybrid matching: 40% parameters + 60% semantic similarity.
 from typing import List, Optional
 from src.domain.hvac.entities.hvac_description import HVACDescription
 from src.domain.hvac.value_objects.match_result import MatchResult
-from src.domain.hvac.services.matching_engine import MatchingEngineProtocol
 
 
 class ConcreteMatchingEngine:

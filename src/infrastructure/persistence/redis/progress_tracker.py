@@ -35,7 +35,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, cast
 
 from redis import Redis
 from redis.exceptions import RedisError
@@ -518,6 +518,8 @@ class RedisProgressTracker:
             ...     }
             ... )
         """
+        # Pre-init so the except branch can reference it even if we crash early.
+        progress_data: dict = {}
         try:
             # Prepare final progress data
             progress_data = {
@@ -657,8 +659,9 @@ class RedisProgressTracker:
             ...     print(f"AI Model: {status.get('ai_model')}")
         """
         try:
-            # Get progress data from Redis
-            data = self.redis.get(self._get_progress_key(job_id))
+            # decode_responses=True + sync client → return type narrows to Optional[str].
+            # The Redis stub types it as ResponseT (Awaitable | str | bytes | ...) so we cast.
+            data = cast(Optional[str], self.redis.get(self._get_progress_key(job_id)))
             if not data:
                 return None
 
@@ -666,7 +669,9 @@ class RedisProgressTracker:
 
             # Phase 4: If job is completed, merge result data (includes using_ai, ai_model)
             if progress_data.get("status") == "completed":
-                result_data = self.redis.get(self._get_result_key(job_id))
+                result_data = cast(
+                    Optional[str], self.redis.get(self._get_result_key(job_id))
+                )
                 if result_data:
                     try:
                         result = json.loads(result_data)
@@ -720,9 +725,12 @@ class RedisProgressTracker:
             ...     print(f"{entry['timestamp']}: {entry['progress']}% - {entry['stage']} - {entry['message']}")
         """
         try:
-            # Get history list from Redis (LRANGE returns list of JSON strings)
-            history_data = self.redis.lrange(
-                self._get_history_key(job_id), 0, self.max_history_entries - 1
+            # Sync client + decode_responses=True returns list[str]; cast for type-checker.
+            history_data = cast(
+                list[str],
+                self.redis.lrange(
+                    self._get_history_key(job_id), 0, self.max_history_entries - 1
+                ),
             )
 
             # Deserialize each entry

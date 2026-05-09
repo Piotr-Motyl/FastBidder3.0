@@ -267,15 +267,13 @@ class ProcessMatchingService:
             pl.Series(price_col_name, price_results),
             pl.Series(score_col_name, score_results),
         ]
+        rename_map = {price_col_name: "Cena", score_col_name: "Match Score"}
         if report_results is not None and report_col_idx is not None:
             report_col_name = wf_df.columns[report_col_idx]
             update_cols.append(pl.Series(report_col_name, report_results))
+            rename_map[report_col_name] = "Match Report"
 
         wf_df = wf_df.with_columns(update_cols)
-
-        rename_map = {price_col_name: "Cena", score_col_name: "Match Score"}
-        if report_results is not None and report_col_idx is not None:
-            rename_map[report_col_name] = "Match Report"
         wf_df = wf_df.rename(rename_map)
 
         # ===== STAGE 6: SAVING_RESULTS (90%) =====

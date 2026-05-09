@@ -29,7 +29,6 @@ async def get_process_matching_use_case(
 ) -> ProcessMatchingUseCase:
     return ProcessMatchingUseCase(
         file_storage=file_storage,
-        celery_app=None,
         progress_tracker=progress_tracker,
     )
 

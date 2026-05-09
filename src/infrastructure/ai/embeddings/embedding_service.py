@@ -140,11 +140,9 @@ class EmbeddingService:
         if not text:
             raise ValueError("Cannot embed empty text")
 
-        # Generate embedding
-        # convert_to_numpy=True returns numpy array (we convert to list)
-        embedding = self.model.encode(text, convert_to_numpy=True)
-
-        # Convert numpy array to Python list for JSON serialization
+        # convert_to_numpy=True returns np.ndarray; cast keeps the type-checker happy
+        # because SentenceTransformer.encode() has a Union return type.
+        embedding = np.asarray(self.model.encode(text, convert_to_numpy=True))
         return embedding.tolist()
 
     def embed_batch(
@@ -185,34 +183,25 @@ class EmbeddingService:
         # Trim all texts
         texts = [t.strip() for t in texts]
 
-        # Encode batch
         # show_progress_bar: only for large batches (>100 items)
-        embeddings = self.model.encode(
-            texts,
-            batch_size=batch_size,
-            convert_to_numpy=True,
-            show_progress_bar=len(texts) > 100,
+        embeddings = np.asarray(
+            self.model.encode(
+                texts,
+                batch_size=batch_size,
+                convert_to_numpy=True,
+                show_progress_bar=len(texts) > 100,
+            )
         )
-
-        # Convert numpy array to list of lists
         return embeddings.tolist()
 
     def get_embedding_dimension(self) -> int:
-        """
-        Return dimension of embedding vectors.
-
-        For default model (paraphrase-multilingual-MiniLM-L12-v2): 384
-        For other models: varies (e.g., all-MiniLM-L6-v2 is also 384)
-
-        Returns:
-            Embedding dimension as integer.
-
-        Example:
-            >>> service = EmbeddingService()
-            >>> service.get_embedding_dimension()
-            384
-        """
-        return self.model.get_sentence_embedding_dimension()
+        """Return embedding dimension (384 for the default multilingual MiniLM model)."""
+        dimension = self.model.get_sentence_embedding_dimension()
+        if dimension is None:
+            raise RuntimeError(
+                f"Model '{self.model_name}' did not expose an embedding dimension"
+            )
+        return dimension
 
     def similarity(self, embedding_a: list[float], embedding_b: list[float]) -> float:
         """

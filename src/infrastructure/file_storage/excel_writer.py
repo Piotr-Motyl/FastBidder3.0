@@ -503,17 +503,11 @@ class ExcelWriterService:
 
         # Write prices to column for each description
         for desc in descriptions:
-            # Skip descriptions without matched price
-            if desc.matched_price is None:
+            # Skip rows without a matched price or without a known target row
+            if desc.matched_price is None or desc.source_row_number is None:
                 continue
 
-            # Get Excel row number (1-based, from source_row_number)
-            row_number = desc.source_row_number
-
-            # Get cell at (row, column) - both 1-based in openpyxl
-            cell = worksheet.cell(row=row_number, column=column_index)
-
-            # Write price as float (Decimal -> float for Excel)
+            cell = worksheet.cell(row=desc.source_row_number, column=column_index)
             cell.value = float(desc.matched_price)
 
     def _write_reports_to_column(
@@ -558,24 +552,14 @@ class ExcelWriterService:
 
         # Write reports to column for each description
         for desc in descriptions:
-            # Skip descriptions without match score (no match found)
-            if desc.match_score is None:
+            if desc.match_score is None or desc.source_row_number is None:
                 continue
 
-            # Get match report from description
             report = desc.get_match_report()
-
-            # Skip if report is None or empty
             if not report:
                 continue
 
-            # Get Excel row number (1-based)
-            row_number = desc.source_row_number
-
-            # Get cell at (row, column) - both 1-based in openpyxl
-            cell = worksheet.cell(row=row_number, column=column_index)
-
-            # Write report text
+            cell = worksheet.cell(row=desc.source_row_number, column=column_index)
             cell.value = report
 
     def _apply_cell_coloring(
@@ -621,31 +605,19 @@ class ExcelWriterService:
 
         # Apply coloring to cells for each description
         for desc in descriptions:
-            # Skip descriptions without matched price or match score
-            if desc.matched_price is None or desc.match_score is None:
+            if (
+                desc.matched_price is None
+                or desc.match_score is None
+                or desc.source_row_number is None
+            ):
                 continue
 
-            # Get match score (0-100)
-            score = desc.match_score.final_score
-
-            # Get color based on score
-            color = self._get_color_for_score(score)
-
-            # Skip if no color (shouldn't happen, but defensive check)
+            color = self._get_color_for_score(desc.match_score.final_score)
             if not color:
                 continue
 
-            # Get Excel row number (1-based)
-            row_number = desc.source_row_number
-
-            # Get cell at (row, column) - both 1-based in openpyxl
-            cell = worksheet.cell(row=row_number, column=column_index)
-
-            # Create fill pattern with color
-            fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
-
-            # Apply fill to cell
-            cell.fill = fill
+            cell = worksheet.cell(row=desc.source_row_number, column=column_index)
+            cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
 
     def _get_color_for_score(self, score: float) -> Optional[str]:
         """

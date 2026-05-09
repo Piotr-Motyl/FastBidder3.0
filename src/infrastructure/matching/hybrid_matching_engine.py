@@ -237,12 +237,15 @@ class HybridMatchingEngine:
                 f"Stage 2 complete: Match found with score {result.score.final_score:.1f}%"
             )
 
-            # Phase 4: Enhance breakdown with AI metadata (HybridMatchingEngine uses AI)
-            # Get AI model name from EmbeddingService (dynamically retrieved)
+            # Phase 4: enhance breakdown with AI metadata.
+            # `model_name` isn't part of EmbeddingServiceProtocol — it's an
+            # implementation detail of EmbeddingService. Read defensively so any
+            # mock implementation just yields ai_model=None.
             ai_model_name = None
             if self.simple_matching_engine.embedding_service is not None:
-                # Model name is stored in embedding_service.model_name attribute
-                ai_model_name = self.simple_matching_engine.embedding_service.model_name
+                ai_model_name = getattr(
+                    self.simple_matching_engine.embedding_service, "model_name", None
+                )
 
             enhanced_breakdown = {
                 **result.breakdown,  # Preserve existing breakdown from SimpleMatchingEngine

@@ -27,17 +27,14 @@ Phase 1 Note:
 """
 
 import logging
-from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, status, HTTPException, Path, Depends
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
 
 # Import from infrastructure (KISS approach - no Application Layer for simple file serving)
 from src.infrastructure.file_storage.file_storage_service import FileStorageService
 from src.infrastructure.persistence.redis.progress_tracker import RedisProgressTracker
-from src.application.models import JobStatus
 
 # Import shared API schemas
 from src.api.schemas.common import ErrorResponse

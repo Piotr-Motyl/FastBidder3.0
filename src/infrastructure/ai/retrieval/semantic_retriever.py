@@ -6,8 +6,7 @@ Retrieves top-K candidate descriptions based on query text and metadata filters.
 """
 
 import logging
-from typing import Any
-from uuid import UUID
+from typing import Any, cast
 
 from src.domain.hvac.services.embedding_service import EmbeddingServiceProtocol
 from src.domain.hvac.services.semantic_retriever import RetrievalResult
@@ -85,7 +84,9 @@ class SemanticRetriever:
         self.chroma_client = chroma_client
         self.collection_name = collection_name or ChromaClient.COLLECTION_NAME
 
-        logger.info(f"SemanticRetriever initialized with collection: {self.collection_name}")
+        logger.info(
+            f"SemanticRetriever initialized with collection: {self.collection_name}"
+        )
 
     def retrieve(
         self,
@@ -162,8 +163,10 @@ class SemanticRetriever:
             logger.error(f"ChromaDB query failed: {e}")
             raise RuntimeError(f"Vector database query failed: {e}") from e
 
-        # 5. Normalize distances to similarity scores and build results
-        retrieval_results = self._build_retrieval_results(results)
+        # 5. Normalize distances to similarity scores and build results.
+        # ChromaDB returns QueryResult (TypedDict); _build_retrieval_results
+        # only reads list-shaped fields, so casting to dict[str, Any] is safe.
+        retrieval_results = self._build_retrieval_results(cast(dict[str, Any], results))
 
         logger.info(
             f"Retrieved {len(retrieval_results)} results "

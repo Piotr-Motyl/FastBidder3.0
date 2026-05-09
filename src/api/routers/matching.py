@@ -389,13 +389,10 @@ async def process_matching(
         This method defines the interface contract with detailed documentation.
         Actual implementation will be added in Phase 3 - Task 3.4.1.
     """
-    # Implementation based on Phase 2 contract
     try:
-        # Step 2: Convert request to Command
-        # Convert API layer Pydantic models to dict for Application layer
         command = ProcessMatchingCommand(
-            working_file=request.working_file.model_dump(),
-            reference_file=request.reference_file.model_dump(),
+            working_file=request.working_file,
+            reference_file=request.reference_file,
             matching_threshold=request.matching_threshold,
             matching_strategy=request.matching_strategy,
             report_format=request.report_format,

@@ -107,19 +107,11 @@ def test_task_function_exists_and_is_callable():
 
 
 def test_task_has_proper_docstring():
-    """
-    Test that task has comprehensive docstring.
-
-    Verifies documentation includes:
-    - working_file parameter
-    - reference_file parameter
-    - Phase 2 contract details
-    """
+    """Docstring documents both required input dicts."""
     assert process_matching_task.__doc__ is not None
     assert len(process_matching_task.__doc__) > 100
     assert "working_file" in process_matching_task.__doc__
     assert "reference_file" in process_matching_task.__doc__
-    assert "Phase 2" in process_matching_task.__doc__
 
 
 def test_task_signature_has_correct_parameters():
@@ -289,17 +281,11 @@ def test_ai_matching_disabled_by_default():
 
 
 def test_task_docstring_documents_ai_fields():
-    """
-    Test that task docstring documents new AI matching fields (Phase 4).
-
-    Verifies:
-    - using_ai field is documented in Returns section
-    - ai_model field is documented in Returns section
-    """
+    """Docstring mentions the AI-matching fields returned by the task."""
     docstring = process_matching_task.__doc__
+    assert docstring is not None
     assert "using_ai" in docstring
     assert "ai_model" in docstring
-    assert "Phase 4" in docstring
 
 
 # ============================================================================
