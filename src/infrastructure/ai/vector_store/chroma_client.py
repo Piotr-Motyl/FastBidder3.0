@@ -329,22 +329,13 @@ class ChromaClientSingleton:
     @classmethod
     def reset_instance(cls) -> None:
         """
-        Reset the singleton instance (for testing purposes).
-
-        WARNING: Use with extreme caution in production code.
-        This method is intended for test teardown/setup.
-
-        Acquires lock to ensure thread-safe reset.
-        Resets client before clearing instance to release resources.
-
-        Example:
-            >>> # In test teardown
-            >>> ChromaClientSingleton.reset_instance()
-            >>> assert ChromaClientSingleton._instance is None
+        Drop the cached singleton so the next get_instance() builds a fresh
+        ChromaClient. Used by both test teardown and the Celery matching task
+        to pick up reference files indexed by the API process between jobs.
         """
         with cls._lock:
             if cls._instance is not None:
                 # Reset client to release resources before clearing instance
                 cls._instance.reset()
                 cls._instance = None
-                logger.warning("ChromaClient singleton instance reset (testing only)")
+                logger.debug("ChromaClient singleton instance reset")

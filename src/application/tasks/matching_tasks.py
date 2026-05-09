@@ -6,6 +6,7 @@ the actual matching pipeline to ProcessMatchingService.
 """
 
 import asyncio
+import gc
 import logging
 import os
 import time
@@ -127,6 +128,17 @@ def process_matching_task(
                 from src.infrastructure.matching.hybrid_matching_engine import HybridMatchingEngine
 
                 embedding_service = EmbeddingServiceSingleton.get_instance()
+                # Reset ChromaClient singleton: API process may have indexed
+                # new reference files since this worker last ran a task, so the
+                # in-memory collection UUID handle can be stale. Without this
+                # subsequent jobs fail with "Error executing plan: Internal
+                # error: Error finding id". The singleton is per-worker-process,
+                # so other concurrent calls are unaffected (--pool=solo).
+                ChromaClientSingleton.reset_instance()
+                # Force GC: PersistentClient mmaps SQLite WAL files; without an
+                # explicit collect, the previous client's file handles linger
+                # and inflate RSS across sequential jobs.
+                gc.collect()
                 chroma_client = ChromaClientSingleton.get_instance()
                 semantic_retriever = SemanticRetriever(embedding_service, chroma_client)
                 simple_engine = SimpleMatchingEngine(parameter_extractor, config, embedding_service)
