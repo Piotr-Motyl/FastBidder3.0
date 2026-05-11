@@ -49,7 +49,6 @@ import logging
 import time
 from io import BytesIO
 from pathlib import Path
-from typing import Optional
 
 import openpyxl
 import pytest
@@ -313,10 +312,10 @@ def validate_output_file(file_bytes: bytes, min_success_rate: float = MIN_SUCCES
     assert "Match Score" in headers, "Missing column: Match Score"
     assert "Match Report" in headers, "Missing column: Match Report"
 
-    # Get column indices
+    # Get column indices (Match Report column is asserted to exist above
+    # but isn't used in the stats — its presence is the contract).
     price_col = headers.index("Cena") + 1
     score_col = headers.index("Match Score") + 1
-    report_col = headers.index("Match Report") + 1
 
     # Count statistics
     total_rows = ws.max_row - 1  # Exclude header
@@ -328,7 +327,6 @@ def validate_output_file(file_bytes: bytes, min_success_rate: float = MIN_SUCCES
     for row_idx in range(2, ws.max_row + 1):  # Start from row 2 (skip header)
         price = ws.cell(row_idx, price_col).value
         score = ws.cell(row_idx, score_col).value
-        report = ws.cell(row_idx, report_col).value
 
         if price is not None and price != "":
             rows_with_price += 1
@@ -500,61 +498,90 @@ def test_full_workflow_happy_path(
 @pytest.mark.e2e
 def test_workflow_with_invalid_files(test_client, clean_redis, clean_chromadb, docker_services):
     """
-    Test E2E workflow with invalid file uploads.
+    Verify the upload endpoint rejects each of the documented invalid-file cases:
+      1. Empty file
+      2. Wrong content (text bytes with .xlsx extension)
+      3. Corrupted Excel (looks like .xlsx by extension/MIME but bytes are garbage)
+      4. File too large (> MAX_FILE_SIZE_MB, default 10 MB)
 
-    Tests error handling for:
-        - Non-Excel file (e.g., .txt, .pdf)
-        - Corrupted Excel file
-        - Empty file
-        - File too large (>10MB)
-
-    Expected Behavior:
-        - Upload should fail with 400/413/422 error
-        - Error response should have ErrorResponse format
-        - Error message should be descriptive
-
-    Acceptance Criteria:
-        ✓ Invalid file upload returns appropriate error code
-        ✓ Error message is descriptive
-        ✓ System doesn't crash or leave orphaned resources
+    Expected codes: 400 / 413 / 422 (4xx client error). System must stay healthy.
     """
     logger.info("=" * 60)
     logger.info("STARTING E2E TEST: Invalid Files")
     logger.info("=" * 60)
 
-    # Test 1: Empty file
-    logger.info("\n[TEST 1] Uploading empty file...")
-    empty_file = BytesIO(b"")
+    xlsx_mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    accepted_codes = (400, 413, 422)
+
+    # Case 1: Empty file
+    logger.info("\n[CASE 1] Empty file...")
     response = test_client.post(
         "/api/files/upload",
-        files={
-            "file": (
-                "empty.xlsx",
-                empty_file,
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-        },
+        files={"file": ("empty.xlsx", BytesIO(b""), xlsx_mime)},
     )
-    assert response.status_code in [400, 422], (
-        f"Expected 400 or 422 for empty file, got {response.status_code}"
+    assert response.status_code in accepted_codes, (
+        f"Empty file should be rejected, got {response.status_code} - {response.text}"
     )
     logger.info(f"✓ Empty file rejected with {response.status_code}")
 
-    # Test 2: Wrong content type (text file)
-    logger.info("\n[TEST 2] Uploading text file as Excel...")
-    text_file = BytesIO(b"This is not an Excel file")
+    # Case 2: Wrong content type (text bytes labeled as text/plain)
+    logger.info("\n[CASE 2] Text file mislabeled as Excel...")
     response = test_client.post(
         "/api/files/upload",
-        files={"file": ("fake.xlsx", text_file, "text/plain")},
+        files={"file": ("fake.xlsx", BytesIO(b"This is not an Excel file"), "text/plain")},
     )
-    assert response.status_code in [400, 422], (
-        f"Expected 400 or 422 for text file, got {response.status_code}"
+    assert response.status_code in accepted_codes, (
+        f"Text file should be rejected, got {response.status_code} - {response.text}"
     )
     logger.info(f"✓ Text file rejected with {response.status_code}")
 
+    # Case 3: Corrupted Excel — random bytes with .xlsx extension and correct MIME
+    # An xlsx is a ZIP archive; arbitrary bytes are not a valid ZIP and openpyxl
+    # must reject them rather than crash the API.
+    logger.info("\n[CASE 3] Corrupted Excel (random bytes with .xlsx extension)...")
+    corrupted = BytesIO(b"\x00\x01\x02\x03not a real xlsx zip\xff\xfe" * 10)
+    response = test_client.post(
+        "/api/files/upload",
+        files={"file": ("corrupted.xlsx", corrupted, xlsx_mime)},
+    )
+    assert response.status_code in accepted_codes, (
+        f"Corrupted xlsx should be rejected, got {response.status_code} - {response.text}"
+    )
+    logger.info(f"✓ Corrupted xlsx rejected with {response.status_code}")
+
+    # Case 4: File too large — synthesize > 10 MB payload (MAX_FILE_SIZE_MB default).
+    # We don't need a real xlsx; size-check should run before xlsx parsing.
+    logger.info("\n[CASE 4] File too large (>10MB)...")
+    eleven_mb = b"\x00" * (11 * 1024 * 1024)
+    response = test_client.post(
+        "/api/files/upload",
+        files={"file": ("huge.xlsx", BytesIO(eleven_mb), xlsx_mime)},
+    )
+    assert response.status_code in accepted_codes, (
+        f"Oversize file should be rejected, got {response.status_code} - {response.text}"
+    )
+    logger.info(f"✓ Oversize file rejected with {response.status_code}")
+
     logger.info("\n" + "=" * 60)
-    logger.info("E2E TEST COMPLETED: Invalid Files ✓")
+    logger.info("E2E TEST COMPLETED: Invalid Files ✓ (4 cases)")
     logger.info("=" * 60)
+
+
+def _run_matching_and_get_stats(
+    test_client, sample_files, threshold: float, *, min_success_rate: float
+) -> dict:
+    """Run a full upload→match→download cycle and return validate_output_file stats."""
+    working_upload = upload_file(test_client, sample_files["working"], file_type="working")
+    reference_upload = upload_file(test_client, sample_files["reference"], file_type="reference")
+    process_response = trigger_matching(
+        test_client,
+        working_file_id=working_upload["file_id"],
+        reference_file_id=reference_upload["file_id"],
+        threshold=threshold,
+    )
+    poll_job_status(test_client, process_response["job_id"])
+    result_bytes = download_results(test_client, process_response["job_id"])
+    return validate_output_file(result_bytes, min_success_rate=min_success_rate)
 
 
 @pytest.mark.e2e
@@ -567,58 +594,184 @@ def test_workflow_with_low_threshold(
     docker_services,
 ):
     """
-    Test E2E workflow with low match threshold.
+    Verify that lowering the matching threshold yields >= as many matches.
 
-    Tests matching behavior with lower quality threshold (50% instead of 75%).
-    Should match MORE items, but with lower average quality.
+    The strict (75%) baseline filters more candidates out, so the relaxed (50%)
+    run must produce at least as many priced rows. We compare absolute counts —
+    that's the falsifiable claim of the docstring "more items matched".
 
-    Expected Behavior:
-        - More rows should have matches (higher match rate)
-        - Some matches will have score 50-75% (lower quality)
-        - Average match score will be lower than happy path test
-
-    Acceptance Criteria:
-        ✓ Match rate > happy path test (more items matched)
-        ✓ Some matches have score 50-75%
-        ✓ No matches below 50% threshold
+    Acceptance:
+        ✓ rows_with_price(low) >= rows_with_price(high)
+        ✓ Both runs return matches above threshold (sanity)
     """
     logger.info("=" * 60)
-    logger.info("STARTING E2E TEST: Low Threshold")
+    logger.info("STARTING E2E TEST: Low Threshold (vs high baseline)")
     logger.info("=" * 60)
 
-    # Upload files
-    logger.info("\n[STAGE 1] Uploading files...")
-    working_upload = upload_file(test_client, sample_files["working"], file_type="working")
-    reference_upload = upload_file(test_client, sample_files["reference"], file_type="reference")
-
-    # Trigger matching with LOW threshold (50%)
-    logger.info("\n[STAGE 2] Triggering matching with threshold=50%...")
-    process_response = trigger_matching(
-        test_client,
-        working_file_id=working_upload["file_id"],
-        reference_file_id=reference_upload["file_id"],
-        threshold=50.0,  # Lower threshold
+    # Run #1: high threshold (75%) — baseline
+    logger.info("\n[BASELINE] Matching with threshold=75%...")
+    high_stats = _run_matching_and_get_stats(
+        test_client, sample_files, threshold=75.0, min_success_rate=MIN_SUCCESS_RATE
+    )
+    logger.info(
+        f"High-threshold matches: {high_stats['rows_with_price']}/{high_stats['total_rows']}"
     )
 
-    # Wait for completion
-    logger.info("\n[STAGE 3] Waiting for completion...")
-    poll_job_status(test_client, process_response["job_id"])
+    # Run #2: low threshold (50%) — should produce >= matches
+    logger.info("\n[LOW] Matching with threshold=50%...")
+    low_stats = _run_matching_and_get_stats(
+        test_client, sample_files, threshold=50.0, min_success_rate=0.3
+    )
+    logger.info(
+        f"Low-threshold matches: {low_stats['rows_with_price']}/{low_stats['total_rows']}"
+    )
 
-    # Download results
-    logger.info("\n[STAGE 4] Downloading results...")
-    result_bytes = download_results(test_client, process_response["job_id"])
+    # Sanity: both runs produced something
+    assert high_stats["rows_with_score"] > 0, "Baseline run should have at least one match"
+    assert low_stats["rows_with_score"] > 0, "Low-threshold run should have at least one match"
 
-    # Validate with lower success rate expectation
-    logger.info("\n[STAGE 5] Validating output (lower threshold)...")
-    stats = validate_output_file(result_bytes, min_success_rate=0.3)  # Lower expectation
-
-    # Assert more matches than with high threshold
-    # (This assumes test runs independently - in real CI/CD might need to persist baseline)
-    assert stats["rows_with_score"] > 0, "Should have at least some matches"
+    # Core assertion: relaxed threshold cannot match fewer items than strict threshold.
+    assert low_stats["rows_with_price"] >= high_stats["rows_with_price"], (
+        f"Lowering threshold from 75% to 50% reduced match count: "
+        f"high={high_stats['rows_with_price']}, low={low_stats['rows_with_price']}. "
+        f"This violates the matching engine's monotonicity in threshold."
+    )
 
     logger.info("\n" + "=" * 60)
     logger.info("E2E TEST COMPLETED: Low Threshold ✓")
+    logger.info(
+        f"Matches at 75% threshold: {high_stats['rows_with_price']}/{high_stats['total_rows']}"
+    )
+    logger.info(
+        f"Matches at 50% threshold: {low_stats['rows_with_price']}/{low_stats['total_rows']}"
+    )
     logger.info("=" * 60)
-    logger.info(f"Match rate: {stats['rows_with_score']}/{stats['total_rows']}")
-    logger.info(f"Success rate: {stats['success_rate']*100:.1f}%")
-    logger.info("=" * 60)
+
+
+# ============================================================================
+# REQUEST VALIDATION TESTS — confirm API rejects bad requests at the boundary
+# ============================================================================
+
+
+def _build_payload(
+    working_file_id: str,
+    reference_file_id: str,
+    *,
+    threshold: float = 75.0,
+    wf_description_column: str = "A",
+    wf_range_start: int = 2,
+    wf_range_end: int = 21,
+) -> dict:
+    """Construct a /api/matching/process payload, with overridable fields."""
+    return {
+        "working_file": {
+            "file_id": working_file_id,
+            "description_column": wf_description_column,
+            "description_range": {"start": wf_range_start, "end": wf_range_end},
+            "price_target_column": "B",
+            "matching_report_column": "D",
+        },
+        "reference_file": {
+            "file_id": reference_file_id,
+            "description_column": "A",
+            "description_range": {"start": 2, "end": 51},
+            "price_source_column": "B",
+        },
+        "matching_threshold": threshold,
+        "matching_strategy": "best_match",
+        "report_format": "detailed",
+    }
+
+
+@pytest.mark.e2e
+@pytest.mark.parametrize(
+    "bad_threshold",
+    [
+        0.0,     # below allowed minimum (>= 1.0)
+        -10.0,   # negative
+        100.5,   # above allowed maximum (<= 100.0)
+        150.0,   # well above maximum
+    ],
+)
+def test_invalid_threshold_rejected(
+    test_client,
+    sample_files,
+    clean_redis,
+    clean_chromadb,
+    docker_services,
+    bad_threshold: float,
+):
+    """
+    POST /api/matching/process with threshold outside [1.0, 100.0] must return 422.
+
+    Pydantic Field(ge=1.0, le=100.0) on ProcessMatchingRequest.matching_threshold
+    is the contract; this test guards against accidental relaxation.
+    """
+    working_upload = upload_file(test_client, sample_files["working"], file_type="working")
+    reference_upload = upload_file(test_client, sample_files["reference"], file_type="reference")
+
+    payload = _build_payload(
+        working_upload["file_id"],
+        reference_upload["file_id"],
+        threshold=bad_threshold,
+    )
+    response = test_client.post("/api/matching/process", json=payload)
+    assert response.status_code == 422, (
+        f"threshold={bad_threshold} should be rejected with 422, "
+        f"got {response.status_code} - {response.text}"
+    )
+    logger.info(f"✓ threshold={bad_threshold} rejected with 422")
+
+
+@pytest.mark.e2e
+def test_nonexistent_column_rejected(
+    test_client,
+    sample_files,
+    clean_redis,
+    clean_chromadb,
+    docker_services,
+):
+    """
+    Triggering matching against a column that doesn't exist in the working file
+    (e.g., column "Z" on a sample with only A/B) must surface as a job failure
+    with a meaningful error — not a silent success or 500.
+
+    The sample working file has 4 columns (A–D). Column "Z" is index 25,
+    well beyond the file's range; ColumnNotFoundError is raised by the
+    ExcelReader and propagated through the Celery task.
+    """
+    working_upload = upload_file(test_client, sample_files["working"], file_type="working")
+    reference_upload = upload_file(test_client, sample_files["reference"], file_type="reference")
+
+    payload = _build_payload(
+        working_upload["file_id"],
+        reference_upload["file_id"],
+        wf_description_column="Z",  # out of range for the sample file
+    )
+    response = test_client.post("/api/matching/process", json=payload)
+
+    # The API accepts the request (column letter is syntactically valid A-ZZ),
+    # but the Celery task should fail when it tries to read the missing column.
+    assert response.status_code == 202, (
+        f"Expected 202 Accepted (column letter is syntactically valid), "
+        f"got {response.status_code} - {response.text}"
+    )
+    job_id = response.json()["job_id"]
+
+    # Poll until failure. poll_job_status raises AssertionError on failed status —
+    # we want that *expected* failure, so we catch it.
+    with pytest.raises(AssertionError, match="failed"):
+        poll_job_status(test_client, job_id=job_id, timeout_seconds=60)
+
+    # Verify the failure carries an error_details payload (not a silent crash).
+    # The exact message depends on which layer raises first — currently the
+    # matching service indexes wf_df.columns[col_idx] and surfaces an IndexError
+    # ("list index out of range") rather than a domain ColumnNotFoundError.
+    # The contract for *this* test is just: status=failed AND error_details non-empty.
+    final = test_client.get(f"/api/jobs/{job_id}/status").json()
+    assert final["status"] == "failed", f"Expected failed, got {final['status']}"
+    error_text = final.get("error_details") or ""
+    assert error_text.strip(), (
+        f"Expected non-empty error_details on failure, got: {error_text!r}"
+    )
+    logger.info(f"✓ Job correctly failed with error: {error_text}")

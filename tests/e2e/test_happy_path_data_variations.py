@@ -452,31 +452,203 @@ def test_minimum_viable_input_single_item(
     logger.info("=" * 80)
 
 
+def _build_workbook_in_memory(rows: list[list]) -> BytesIO:
+    """Build an .xlsx in memory from a list-of-lists (first row = headers)."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    assert ws is not None
+    for row in rows:
+        ws.append(row)
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def _upload_in_memory_xlsx(test_client, buf: BytesIO, filename: str, file_type: str) -> str:
+    """Upload an in-memory .xlsx and return file_id."""
+    response = test_client.post(
+        "/api/files/upload",
+        files={
+            "file": (
+                filename,
+                buf,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+        params={"file_type": file_type},
+    )
+    assert response.status_code == 201, (
+        f"Upload of {filename} failed: {response.status_code} - {response.text}"
+    )
+    return response.json()["file_id"]
+
+
 @pytest.mark.e2e
-@pytest.mark.skip(reason="PLACEHOLDER for Phase 4+ scaling - not implemented yet")
-def test_very_long_descriptions():
+def test_very_long_descriptions(
+    test_client,
+    clean_redis,
+    clean_chromadb,
+    docker_services,
+):
     """
-    Test very long descriptions (>200 chars) - PLACEHOLDER.
+    Verify long descriptions (>200 chars) survive the full pipeline intact.
 
-    This test will be implemented in Phase 4+ when optimizing for scale.
-
-    Will validate:
-        - No truncation in Excel write/read
-        - No buffer overflow in parameter extraction
-        - Matching works with long texts
-        - Performance acceptable
-
-    Test Data:
-        Working file (3 long descriptions, 200-300 chars each):
-        - Row 2: Zawór kulowy trójdrożny DN50 PN16... (235 chars)
-        - Row 3: Zawór regulacyjny dwudrogowy DN80... (260 chars)
-        - Row 4: Kompensator długości osiowy DN100... (280 chars)
-
-    Expected:
-        - All descriptions preserved completely (no truncation)
-        - All items matched
-        - Job completes in <60s
-
-    Implementation: Phase 4+ (scaling optimization)
+    Validates:
+        - UTF-8 long strings are not truncated by Excel writer (32 767-char cell limit)
+        - Regex parameter extractor handles long texts without buffer issues
+        - Matching engine finds equivalents even when descriptions are verbose
+        - Output preserves full description content
     """
-    pass  # Placeholder - will implement later
+    logger.info("=" * 80)
+    logger.info("STARTING E2E TEST: Very Long Descriptions")
+    logger.info("=" * 80)
+
+    # Build 3 working descriptions, each >200 chars but <300, with parametry HVAC
+    # at the start so the regex extractor has a fair chance.
+    long_desc_1 = (
+        "Zawór kulowy DN50 PN16 mosiądz, "
+        + "z napędem ręcznym dźwigniowym, gwint wewnętrzny BSP, "
+        + "uszczelnienie PTFE, atest do wody pitnej, "
+        + "klasa ognioodporności A60, zakres temperatur od -20°C do +180°C, "
+        + "z certyfikatem PED 2014/68/UE i deklaracją zgodności CE."
+    )
+    long_desc_2 = (
+        "Zawór zwrotny DN80 PN10 żeliwo szare, "
+        + "kołnierzowy, klapowy z zamknięciem sprężynowym przeciwuderzeniowym, "
+        + "korpus żeliwo szare GG-25, kolor RAL 5005, "
+        + "powłoka epoksydowa nakładana fluidalnie, "
+        + "kompletny z kompletem śrub i podkładek pasujących do PN10."
+    )
+    long_desc_3 = (
+        "Kompensator długości osiowy DN100 stal nierdzewna 1.4301, "
+        + "z dwoma mieszkami sprężystymi wielowarstwowymi, "
+        + "kołnierze EN 1092-1 typ 11 PN16, ciągi pomp ciepła, "
+        + "skok kompensacji ±50 mm, dopuszczalna temperatura pracy do 350°C, "
+        + "atest TÜV i protokół próby ciśnieniowej."
+    )
+
+    # Sanity: lengths in expected band
+    for d in (long_desc_1, long_desc_2, long_desc_3):
+        assert 200 < len(d) < 32_767, f"Test description out of band: {len(d)} chars"
+
+    # Working file: header + 3 long rows in column A; columns B/C/D reserved for output.
+    working_buf = _build_workbook_in_memory(
+        [
+            ["Description", "Cena", "Match Score", "Match Report"],
+            [long_desc_1, None, None, None],
+            [long_desc_2, None, None, None],
+            [long_desc_3, None, None, None],
+        ]
+    )
+
+    # Reference file: shorter equivalents with prices, so matching has signal to find.
+    reference_buf = _build_workbook_in_memory(
+        [
+            ["Description", "Price"],
+            ["Zawór kulowy DN50 PN16 mosiądz", 250.00],
+            ["Zawór zwrotny DN80 PN10 żeliwo szare", 180.00],
+            ["Kompensator DN100 stal nierdzewna", 450.00],
+        ]
+    )
+
+    # ========== STAGE 1: Upload ==========
+    logger.info("\n[STAGE 1] Uploading in-memory long-description files...")
+    working_file_id = _upload_in_memory_xlsx(
+        test_client, working_buf, "long_desc_working.xlsx", "working"
+    )
+    reference_file_id = _upload_in_memory_xlsx(
+        test_client, reference_buf, "long_desc_reference.xlsx", "reference"
+    )
+
+    # ========== STAGE 2: Trigger matching with explicit ranges ==========
+    logger.info("\n[STAGE 2] Triggering matching for 3 long descriptions...")
+    payload = {
+        "working_file": {
+            "file_id": working_file_id,
+            "description_column": "A",
+            "description_range": {"start": 2, "end": 4},
+            "price_target_column": "B",
+            "matching_report_column": "D",
+        },
+        "reference_file": {
+            "file_id": reference_file_id,
+            "description_column": "A",
+            "description_range": {"start": 2, "end": 4},
+            "price_source_column": "B",
+        },
+        "matching_threshold": 50.0,  # Long marketing-style text dilutes semantic
+        # similarity (cosine ~50-60%); param score stays high (~80% for DN+PN+
+        # material+valve_type match) → realistic final ~65%. 50% gives margin
+        # without permitting wrong-reference matches.
+        "matching_strategy": "best_match",
+        "report_format": "detailed",
+    }
+    response = test_client.post("/api/matching/process", json=payload)
+    assert response.status_code == 202, (
+        f"Trigger failed: {response.status_code} - {response.text}"
+    )
+    job_id = response.json()["job_id"]
+
+    # ========== STAGE 3: Poll for completion ==========
+    logger.info("\n[STAGE 3] Waiting for completion...")
+    final_status = poll_job_status(
+        test_client,
+        job_id=job_id,
+        timeout_seconds=TEST_TIMEOUT_SECONDS,
+        poll_interval=POLL_INTERVAL_SECONDS,
+    )
+    assert final_status["status"] == "completed", (
+        f"Expected completed, got {final_status['status']}"
+    )
+
+    # ========== STAGE 4: Download + validate no truncation ==========
+    logger.info("\n[STAGE 4] Validating output preserves long descriptions...")
+    result_bytes = download_results(test_client, job_id)
+
+    wb = openpyxl.load_workbook(BytesIO(result_bytes))
+    ws = wb.active
+    assert ws is not None
+
+    headers = [cell.value for cell in ws[1]]
+    desc_col = get_column_index(headers, "Description")
+    price_col = get_column_index(headers, "Cena")
+    score_col = get_column_index(headers, "Match Score")
+
+    # Each long working description must match its OWN short reference equivalent —
+    # not some other valve type. The price is the cheapest deterministic check
+    # because each reference row has a unique price; matching the wrong reference
+    # row would yield a wrong price even if the score is high.
+    expected = [
+        (long_desc_1, 250.00),  # → "Zawór kulowy DN50 PN16 mosiądz"
+        (long_desc_2, 180.00),  # → "Zawór zwrotny DN80 PN10 żeliwo szare"
+        (long_desc_3, 450.00),  # → "Kompensator DN100 stal nierdzewna"
+    ]
+    for idx, (expected_desc, expected_price) in enumerate(expected, start=2):
+        actual_desc = ws.cell(idx, desc_col).value
+        actual_price = ws.cell(idx, price_col).value
+        actual_score = ws.cell(idx, score_col).value
+
+        # Preservation: byte-for-byte match (no truncation, no encoding mangling)
+        assert actual_desc == expected_desc, (
+            f"Row {idx} description was modified.\n"
+            f"  Expected ({len(expected_desc)} chars): {expected_desc[:80]}...\n"
+            f"  Actual   ({len(str(actual_desc))} chars): {str(actual_desc)[:80]}..."
+        )
+        # Matching: must hit the CORRECT reference row (verified via unique price)
+        assert actual_price is not None, f"Row {idx} got no price (long desc broke matching)"
+        assert actual_price == expected_price, (
+            f"Row {idx} matched WRONG reference: expected price {expected_price}, "
+            f"got {actual_price}. The matching engine is finding a different valve."
+        )
+        assert isinstance(actual_score, (int, float)), (
+            f"Row {idx} score should be numeric, got {type(actual_score)}"
+        )
+        logger.info(
+            f"✓ Row {idx}: {len(expected_desc)} chars preserved, "
+            f"price={actual_price} (correct), score={actual_score}"
+        )
+
+    logger.info("\n" + "=" * 80)
+    logger.info("E2E TEST COMPLETED: Very Long Descriptions ✓")
+    logger.info("=" * 80)
