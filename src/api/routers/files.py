@@ -1,30 +1,8 @@
-"""
-API Router for File Upload
+"""HTTP interface for file upload (POST /files/upload).
 
-Responsibility:
-    HTTP interface for uploading Excel files with metadata extraction.
-    Thin layer that delegates to Application Layer use case via dependency injection.
-
-Architecture Notes:
-    - Part of API Layer (Presentation)
-    - Depends on Application Layer (FileUploadUseCase - Task 2.4.1)
-    - Returns 201 Created for successful uploads (REST best practice)
-    - No business logic - pure HTTP concerns
-    - Uses dependency injection pattern (NOT direct service calls!)
-
-Contains:
-    - POST /files/upload - Upload Excel file with metadata extraction
-
-Does NOT contain:
-    - Business logic (delegated to Domain Layer)
-    - File processing (delegated to Infrastructure Layer)
-    - Excel parsing (delegated to Infrastructure Layer)
-    - Direct file system access (delegated to Infrastructure Layer)
-    - Job status tracking (separate router: jobs.py)
-
-Phase 2 Note:
-    This is a Phase 2 DETAILED CONTRACT. Implementation will be added in Phase 3.
-    All endpoints raise NotImplementedError.
+Working-file uploads skip AI indexing entirely. Reference-file uploads always
+attempt ChromaDB indexing — the USE_AI_MATCHING env-var controls the matching
+engine at process time, not whether the upload is indexed.
 """
 
 import logging
@@ -33,97 +11,42 @@ from typing import Any, Dict, Optional, Literal
 from fastapi import APIRouter, status, HTTPException, Depends, UploadFile, File, Query
 from pydantic import BaseModel, ConfigDict, Field
 
-# Import Application Layer use case
 from src.application.services.file_upload_use_case import FileUploadUseCase
 from src.domain.shared.exceptions import (
     FileSizeExceededError,
     ExcelParsingError,
 )
-
-# Import Infrastructure services for dependency injection
 from src.infrastructure.file_storage.file_storage_service import FileStorageService
-
-# Import shared API schemas
 from src.api.schemas.common import ErrorResponse
 
-# Configure logger
 logger = logging.getLogger(__name__)
 
 
-# ============================================================================
-# RESPONSE MODELS
-# ============================================================================
-
-
 class UploadFileResponse(BaseModel):
-    """
-    Response model for successful file upload.
-
-    Returned with HTTP 201 Created to indicate file was uploaded and processed.
-    Contains complete file metadata and preview for user confirmation.
-
-    Attributes:
-        file_id: Unique identifier for uploaded file (use in matching requests)
-        filename: Original filename from user
-        size_mb: File size in megabytes (2 decimal places)
-        sheets_count: Number of sheets in Excel file
-        rows_count: Number of rows in first sheet (including header)
-        columns_count: Number of columns in first sheet
-        upload_time: Upload timestamp in ISO 8601 format
-        preview: First 5 rows from first sheet as JSON array
-        message: Human-readable success message
-
-    Usage Note:
-        User should use `file_id` when submitting matching requests:
-        POST /matching/process with working_file.file_id or reference_file.file_id
-
-    Phase 2 Extensions:
-        - preview: Allows user to verify file structure before processing
-        - sheets_count, rows_count, columns_count: Help user select correct ranges
-    """
+    """Returned with 201 Created. Includes file_id (use in /matching/process)
+    and metadata + 5-row preview for the user to verify file structure."""
 
     file_id: str = Field(description="Unique file identifier (UUID as string)")
-
     filename: str = Field(description="Original filename from user")
-
-    size_mb: float = Field(
-        description="File size in megabytes (2 decimal places)", ge=0.0
-    )
-
-    sheets_count: int = Field(description="Number of sheets in Excel file", ge=1)
-
-    rows_count: int = Field(
-        description="Number of rows in first sheet (including header)", ge=0
-    )
-
-    columns_count: int = Field(description="Number of columns in first sheet", ge=0)
-
-    upload_time: str = Field(description="Upload timestamp in ISO 8601 format")
-
+    size_mb: float = Field(ge=0.0, description="File size in megabytes")
+    sheets_count: int = Field(ge=1, description="Number of sheets in Excel file")
+    rows_count: int = Field(ge=0, description="Rows in first sheet (incl. header)")
+    columns_count: int = Field(ge=0, description="Columns in first sheet")
+    upload_time: str = Field(description="Upload timestamp (ISO 8601)")
     preview: list[Dict[str, Any]] = Field(
-        description="First 5 rows from first sheet as JSON array (for user verification)",
         default_factory=list,
+        description="First 5 rows from first sheet (for user verification)",
     )
-
     message: str = Field(
-        default="File uploaded successfully. Use file_id for matching requests.",
-        description="Human-readable success message",
+        default="File uploaded successfully. Use file_id for matching requests."
     )
-
-    # Phase 4: AI Matching fields for vector DB indexing
-    file_type: Literal["working", "reference"] = Field(
-        default="working",
-        description="File type for AI indexing (working or reference)",
-    )
-
+    file_type: Literal["working", "reference"] = Field(default="working")
     indexing_status: Optional[str] = Field(
         default=None,
-        description="ChromaDB indexing status (pending/completed/failed) - Phase 4",
+        description="ChromaDB indexing status: success/partial/failed/skipped",
     )
-
     indexed_count: Optional[int] = Field(
-        default=None,
-        description="Number of items indexed in vector DB - Phase 4",
+        default=None, description="Number of items indexed in vector DB"
     )
 
     model_config = ConfigDict(
@@ -137,21 +60,9 @@ class UploadFileResponse(BaseModel):
                 "columns_count": 8,
                 "upload_time": "2024-01-15T10:30:00.123456",
                 "preview": [
-                    {
-                        "Description": "Zawór kulowy DN50 PN16",
-                        "Price": 123.45,
-                        "Quantity": 10,
-                    },
-                    {
-                        "Description": "Rura stalowa DN100",
-                        "Price": 234.56,
-                        "Quantity": 5,
-                    },
-                    {
-                        "Description": "Kolano 90° DN50",
-                        "Price": 45.67,
-                        "Quantity": 20,
-                    },
+                    {"Description": "Zawór kulowy DN50 PN16", "Price": 123.45, "Quantity": 10},
+                    {"Description": "Rura stalowa DN100", "Price": 234.56, "Quantity": 5},
+                    {"Description": "Kolano 90° DN50", "Price": 45.67, "Quantity": 20},
                 ],
                 "message": "File uploaded successfully. Use file_id in matching requests.",
                 "file_type": "reference",
@@ -162,53 +73,25 @@ class UploadFileResponse(BaseModel):
     )
 
 
-# ============================================================================
-# ROUTER CONFIGURATION
-# ============================================================================
-
-
 router = APIRouter(
     prefix="/files",
     tags=["files"],
     responses={
-        400: {
-            "model": ErrorResponse,
-            "description": "Bad Request - Invalid file extension",
-        },
-        413: {
-            "model": ErrorResponse,
-            "description": "Payload Too Large - File size exceeds 10MB limit",
-        },
-        422: {
-            "model": ErrorResponse,
-            "description": "Unprocessable Entity - File cannot be parsed as Excel",
-        },
+        400: {"model": ErrorResponse, "description": "Invalid file extension"},
+        413: {"model": ErrorResponse, "description": "File exceeds 10MB limit"},
+        422: {"model": ErrorResponse, "description": "File cannot be parsed as Excel"},
         500: {"model": ErrorResponse, "description": "Internal Server Error"},
     },
 )
-
-
-# ============================================================================
-# DEPENDENCY INJECTION
-# ============================================================================
 
 
 async def get_file_upload_use_case(
     file_type: Literal["working", "reference"] = Query(default="working"),
 ):
     """
-    Dependency injection for FileUploadUseCase.
-
-    Reads file_type from the query string so it can decide whether to initialise
-    the ReferenceIndexer.  ReferenceIndexer is only created for reference-file
-    uploads — working-file uploads skip AI initialisation entirely.
-
-    Indexing is always attempted for reference files regardless of the
-    USE_AI_MATCHING env-var (which controls only which engine the Celery task
-    uses at match time, not whether the upload is indexed).
-
-    Returns:
-        FileUploadUseCase: Application Layer use case for file upload
+    Read file_type from query string to decide whether to wire up ReferenceIndexer.
+    Skipping it for working-file uploads avoids loading the embedding model on
+    every upload.
     """
     file_storage = FileStorageService()
     reference_indexer = None
@@ -231,6 +114,8 @@ async def get_file_upload_use_case(
             logger.info("ReferenceIndexer initialised for reference file upload")
 
         except Exception as e:
+            # Don't block upload on indexer init failure — file will be saved
+            # but not indexed; matching against it will fall back to non-AI engine.
             logger.warning(
                 f"Failed to initialise ReferenceIndexer — file will be uploaded "
                 f"but not indexed for AI matching: {e}"
@@ -238,11 +123,6 @@ async def get_file_upload_use_case(
             reference_indexer = None
 
     return FileUploadUseCase(file_storage=file_storage, reference_indexer=reference_indexer)
-
-
-# ============================================================================
-# ENDPOINTS
-# ============================================================================
 
 
 @router.post(
@@ -253,195 +133,34 @@ async def get_file_upload_use_case(
     description=(
         "Upload Excel file (.xlsx or .xls) and receive file_id for matching requests. "
         "Returns metadata (sheets, rows, columns, size) and preview of first 5 rows. "
-        "Max file size: 10MB. "
-        "Use returned file_id in POST /matching/process requests."
+        "Max file size: 10MB."
     ),
     responses={
-        201: {
-            "description": "Success - File uploaded and metadata extracted",
-            "model": UploadFileResponse,
-        },
-        400: {
-            "description": "Bad Request - Invalid file extension (must be .xlsx or .xls)",
-        },
-        413: {"description": "Payload Too Large - File exceeds 10MB limit"},
-        422: {
-            "description": "Unprocessable Entity - File cannot be parsed as valid Excel"
-        },
+        201: {"description": "File uploaded and metadata extracted", "model": UploadFileResponse},
+        400: {"description": "Invalid file extension (must be .xlsx or .xls)"},
+        413: {"description": "File exceeds 10MB limit"},
+        422: {"description": "File cannot be parsed as valid Excel"},
     },
 )
 async def upload_file(
-    file: UploadFile = File(
-        ...,
-        description="Excel file to upload (.xlsx or .xls, max 10MB)",
-    ),
+    file: UploadFile = File(..., description="Excel file (.xlsx or .xls, max 10MB)"),
     file_type: Literal["working", "reference"] = Query(
         default="working",
-        description="File type for AI indexing: 'working' (to be matched) or 'reference' (catalog for matching against)",
+        description=(
+            "'working' = to be matched (no indexing); "
+            "'reference' = catalog (indexed into ChromaDB for AI semantic search)"
+        ),
     ),
     use_case=Depends(get_file_upload_use_case),
 ) -> UploadFileResponse:
-    """
-    Upload Excel file with metadata extraction and preview.
-
-    Process Flow:
-        1. Receive multipart/form-data file upload from user
-        2. Read file data into memory (FastAPI handles this)
-        3. Delegate to Application Layer use case
-        4. Use case generates file_id and saves file to uploads/{file_id}/
-        5. Use case extracts metadata (sheets, rows, columns, size)
-        6. Use case extracts preview (first 5 rows from first sheet)
-        7. Return 201 Created with file_id, metadata, and preview
-
-    Args:
-        file: Uploaded file from multipart/form-data (FastAPI UploadFile)
-        use_case: Injected FileUploadUseCase from Application Layer
-
-    Returns:
-        UploadFileResponse with file_id, metadata, preview, and success message
-
-    Raises:
-        HTTPException 400: If file extension is not .xlsx or .xls
-        HTTPException 413: If file size exceeds 10MB limit
-        HTTPException 422: If file cannot be parsed as valid Excel
-        HTTPException 500: If unexpected error during processing
-
-    Architecture Note:
-        This endpoint is a thin wrapper around Application Layer.
-        All business logic is delegated to FileUploadUseCase.
-        No direct file system access - follows dependency inversion principle.
-
-    Examples:
-        >>> # Using curl
-        >>> curl -X POST "http://localhost:8000/api/files/upload" \\
-        ...      -H "Content-Type: multipart/form-data" \\
-        ...      -F "file=@catalog.xlsx"
-        {
-            "file_id": "a3bb189e-8bf9-3888-9912-ace4e6543002",
-            "filename": "catalog.xlsx",
-            "size_mb": 1.23,
-            "sheets_count": 2,
-            "rows_count": 150,
-            "columns_count": 8,
-            "upload_time": "2024-01-15T10:30:00",
-            "preview": [
-                {"Description": "Zawór DN50", "Price": 123.45},
-                {"Description": "Rura DN100", "Price": 234.56}
-            ],
-            "message": "File uploaded successfully. Use file_id in matching requests."
-        }
-
-        >>> # Using Python requests
-        >>> import requests
-        >>> with open("catalog.xlsx", "rb") as f:
-        ...     response = requests.post(
-        ...         "http://localhost:8000/api/files/upload",
-        ...         files={"file": f}
-        ...     )
-        >>> data = response.json()
-        >>> print(data["file_id"])
-        a3bb189e-8bf9-3888-9912-ace4e6543002
-
-        >>> # Then use file_id in matching request
-        >>> matching_request = {
-        ...     "working_file": {
-        ...         "file_id": data["file_id"],
-        ...         "description_column": "B",
-        ...         ...
-        ...     }
-        ... }
-    """
-    # CONTRACT ONLY - Implementation in Phase 3
-    #
-    # Implementation will:
-    # 1. Read file data from UploadFile
-    # 2. Convert to bytes
-    # 3. Call use_case.execute(file_data, filename)
-    # 4. Convert FileUploadResult to UploadFileResponse
-    # 5. Return response with 201 Created
-    #
-    # Example implementation:
-    # from src.domain.shared.exceptions import FileSizeExceededError, ExcelParsingError
-    #
-    # try:
-    #     # Read file data
-    #     file_data = await file.read()
-    #
-    #     # Execute use case
-    #     result = await use_case.execute(
-    #         file_data=file_data,
-    #         filename=file.filename
-    #     )
-    #
-    #     # Convert to response
-    #     return UploadFileResponse(
-    #         file_id=result.file_id,
-    #         filename=result.filename,
-    #         size_mb=result.size_mb,
-    #         sheets_count=result.sheets_count,
-    #         rows_count=result.rows_count,
-    #         columns_count=result.columns_count,
-    #         upload_time=result.upload_time,
-    #         preview=result.preview,
-    #         message="File uploaded successfully. Use file_id in matching requests."
-    #     )
-    #
-    # except ValueError as e:
-    #     # Invalid file extension
-    #     raise HTTPException(
-    #         status_code=400,
-    #         detail=ErrorResponse(
-    #             code="INVALID_FILE_EXTENSION",
-    #             message=str(e),
-    #             details={"filename": file.filename}
-    #         ).model_dump()
-    #     )
-    #
-    # except FileSizeExceededError as e:
-    #     # File too large
-    #     raise HTTPException(
-    #         status_code=413,
-    #         detail=ErrorResponse(
-    #             code="FILE_TOO_LARGE",
-    #             message=str(e),
-    #             details={"filename": file.filename, "max_size_mb": 10}
-    #         ).model_dump()
-    #     )
-    #
-    # except ExcelParsingError as e:
-    #     # Cannot parse Excel file
-    #     raise HTTPException(
-    #         status_code=422,
-    #         detail=ErrorResponse(
-    #             code="EXCEL_PARSING_ERROR",
-    #             message=str(e),
-    #             details={"filename": file.filename}
-    #         ).model_dump()
-    #     )
-    #
-    # except Exception as e:
-    #     # Unexpected error
-    #     logger.error(f"Unexpected error during file upload: {e}")
-    #     raise HTTPException(
-    #         status_code=500,
-    #         detail=ErrorResponse(
-    #             code="INTERNAL_SERVER_ERROR",
-    #             message="An unexpected error occurred during file upload",
-    #             details={"error": str(e)}
-    #         ).model_dump()
-    #     )
-
-    # Implementation based on Phase 2 contract
+    """Thin HTTP wrapper around FileUploadUseCase. Maps domain exceptions → HTTP codes."""
     try:
-        # Read file data
         file_data = await file.read()
 
-        # Execute use case (Phase 4: pass file_type for AI indexing)
         result = await use_case.execute(
             file_data=file_data, filename=file.filename, file_type=file_type
         )
 
-        # Convert to response (Phase 4: include file_type for AI indexing)
         return UploadFileResponse(
             file_id=result.file_id,
             filename=result.filename,
@@ -452,13 +171,13 @@ async def upload_file(
             upload_time=result.upload_time,
             preview=result.preview,
             message="File uploaded successfully. Use file_id in matching requests.",
-            file_type=file_type,  # Phase 4: AI indexing support
-            indexing_status=None,  # Phase 4: Will be updated by async indexing task
-            indexed_count=None,  # Phase 4: Will be populated after indexing completes
+            file_type=file_type,
+            indexing_status=None,  # populated by async indexing task once it completes
+            indexed_count=None,
         )
 
     except ValueError as e:
-        # Invalid file extension
+        # Raised on invalid file extension by FileStorageService.
         raise HTTPException(
             status_code=400,
             detail={
@@ -469,7 +188,6 @@ async def upload_file(
         )
 
     except FileSizeExceededError as e:
-        # File too large
         raise HTTPException(
             status_code=413,
             detail={
@@ -480,7 +198,6 @@ async def upload_file(
         )
 
     except ExcelParsingError as e:
-        # Cannot parse Excel file
         raise HTTPException(
             status_code=422,
             detail={
@@ -491,7 +208,6 @@ async def upload_file(
         )
 
     except Exception as e:
-        # Unexpected error
         logger.error(f"Unexpected error during file upload: {e}")
         raise HTTPException(
             status_code=500,
