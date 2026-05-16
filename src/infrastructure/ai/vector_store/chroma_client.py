@@ -20,36 +20,11 @@ logger = logging.getLogger(__name__)
 
 class ChromaClient:
     """
-    ChromaDB client wrapper for vector storage operations.
+    ChromaDB persistent client. Persist dir: CHROMA_PERSIST_DIR env or ./data/chroma_db.
+    Distance metric: cosine. Telemetry disabled.
 
-    Provides simplified interface for managing vector collections.
-    Uses persistent storage (data survives restarts).
-
-    Key features:
-    - Persistent storage at configurable path (from env or default)
-    - Cosine distance metric (optimal for sentence-transformers)
-    - Health checking for operational status
-    - Collection statistics (count, metadata)
-
-    Configuration:
-    - CHROMA_PERSIST_DIR env variable or default: ./data/chroma
-    - Distance metric: cosine (hnsw:space)
-    - Telemetry: disabled (anonymized_telemetry=False)
-
-    WARNING:
-    - Do NOT instantiate ChromaClient directly in production code
-    - Use ChromaClientSingleton.get_instance() instead to avoid resource leaks
-    - Direct instantiation is only for testing with temporary directories
-
-    Example:
-        >>> # Production code - use Singleton
-        >>> client = ChromaClientSingleton.get_instance()
-        >>> collection = client.get_or_create_collection()
-        >>> client.health_check()
-        True
-        >>>
-        >>> # Test code - direct instantiation with temp directory is OK
-        >>> test_client = ChromaClient(persist_directory="/tmp/test_chroma")
+    In production use ChromaClientSingleton.get_instance() to avoid resource leaks.
+    Direct instantiation is fine in tests (pass a temp dir).
     """
 
     # Default collection name for reference descriptions
@@ -60,24 +35,7 @@ class ChromaClient:
     DEFAULT_PERSIST_DIR = "./data/chroma_db"
 
     def __init__(self, persist_directory: str | None = None) -> None:
-        """
-        Initialize ChromaDB client with persistent storage.
-
-        Persist directory is determined by (in order of priority):
-        1. persist_directory parameter
-        2. CHROMA_PERSIST_DIR environment variable
-        3. DEFAULT_PERSIST_DIR constant (./data/chroma)
-
-        Directory is created if it doesn't exist.
-
-        Args:
-            persist_directory: Optional path for data persistence.
-                If None, uses CHROMA_PERSIST_DIR env or default.
-
-        Example:
-            >>> client = ChromaClient()  # Uses env or default
-            >>> client = ChromaClient("./custom/path")  # Custom path
-        """
+        """Persist dir priority: param > CHROMA_PERSIST_DIR env > DEFAULT_PERSIST_DIR. Created if missing."""
         # Determine persist directory (priority: param > env > default)
         if persist_directory is None:
             persist_directory = os.getenv(
@@ -101,25 +59,7 @@ class ChromaClient:
         name: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> chromadb.Collection:
-        """
-        Get existing collection or create new one.
-
-        If collection exists, returns it. If not, creates with specified metadata.
-        Default metadata uses cosine distance (optimal for sentence-transformers).
-
-        Args:
-            name: Collection name. Defaults to COLLECTION_NAME.
-            metadata: Collection metadata. Defaults to {"hnsw:space": "cosine"}.
-
-        Returns:
-            ChromaDB Collection object for adding/querying embeddings.
-
-        Example:
-            >>> collection = client.get_or_create_collection()
-            >>> collection.count()
-            0
-            >>> collection = client.get_or_create_collection("custom_collection")
-        """
+        """Get or create collection. Default metadata: {"hnsw:space": "cosine"}."""
         collection_name = name or self.COLLECTION_NAME
 
         # Default metadata: cosine distance for embeddings
@@ -134,18 +74,7 @@ class ChromaClient:
         return collection
 
     def delete_collection(self, name: str | None = None) -> None:
-        """
-        Delete a collection and all its data.
-
-        If collection doesn't exist, logs warning but doesn't raise error.
-
-        Args:
-            name: Collection name. Defaults to COLLECTION_NAME.
-
-        Example:
-            >>> client.delete_collection("old_collection")
-            >>> client.delete_collection()  # Deletes default collection
-        """
+        """Delete collection. Logs warning if not found, does not raise."""
         collection_name = name or self.COLLECTION_NAME
 
         try:
@@ -156,21 +85,7 @@ class ChromaClient:
             logger.warning(f"Failed to delete collection {collection_name}: {e}")
 
     def health_check(self) -> bool:
-        """
-        Check if ChromaDB is operational.
-
-        Uses heartbeat method to verify client is responsive.
-        Returns False instead of raising exception on failure.
-
-        Returns:
-            True if healthy and responsive, False otherwise.
-
-        Example:
-            >>> if client.health_check():
-            ...     print("ChromaDB is healthy")
-            ... else:
-            ...     print("ChromaDB is down")
-        """
+        """Return True if ChromaDB heartbeat succeeds, False otherwise (never raises)."""
         try:
             self._client.heartbeat()
             return True
@@ -179,28 +94,7 @@ class ChromaClient:
             return False
 
     def get_collection_stats(self, name: str | None = None) -> dict[str, Any]:
-        """
-        Get statistics for a collection.
-
-        Returns count and basic metadata for specified collection.
-        If collection doesn't exist, returns count=0 with error.
-
-        Args:
-            name: Collection name. Defaults to COLLECTION_NAME.
-
-        Returns:
-            Dict with keys:
-            - name: Collection name
-            - count: Number of items in collection
-            - error: Error message if collection doesn't exist (optional)
-
-        Example:
-            >>> stats = client.get_collection_stats()
-            >>> print(f"Collection has {stats['count']} items")
-            >>> stats = client.get_collection_stats("non_existent")
-            >>> "error" in stats
-            True
-        """
+        """Return {"name": ..., "count": ...}. On error: adds "error" key and count=0."""
         collection_name = name or self.COLLECTION_NAME
 
         try:
@@ -214,19 +108,7 @@ class ChromaClient:
             return {"name": collection_name, "count": 0, "error": str(e)}
 
     def list_collections(self) -> list[str]:
-        """
-        List all collection names in the database.
-
-        Useful for debugging and understanding what's stored.
-
-        Returns:
-            List of collection names.
-
-        Example:
-            >>> collections = client.list_collections()
-            >>> print(collections)
-            ['reference_descriptions', 'test_collection']
-        """
+        """List all collection names. Returns [] on error."""
         try:
             collections = self._client.list_collections()
             return [col.name for col in collections]
@@ -235,15 +117,7 @@ class ChromaClient:
             return []
 
     def reset(self) -> None:
-        """
-        Reset and close ChromaDB client.
-
-        Useful for cleanup in tests, especially on Windows where
-        SQLite database may remain locked.
-
-        Example:
-            >>> client.reset()  # Close connections
-        """
+        """Clear system cache to release file handles. Use in test teardown to prevent SQLite lock on Windows."""
         try:
             # Clear client to release file handles
             self._client.clear_system_cache()
@@ -253,32 +127,7 @@ class ChromaClient:
 
 
 class ChromaClientSingleton:
-    """
-    Thread-safe Singleton wrapper for ChromaClient.
-
-    Ensures only one ChromaDB client instance exists throughout application lifecycle.
-    Prevents resource leaks and conflicts from multiple PersistentClient connections.
-
-    Uses double-checked locking pattern for thread-safe lazy initialization.
-
-    Key features:
-    - Thread-safe initialization with double-checked locking
-    - Single persistent connection to ChromaDB
-    - Test-friendly reset_instance() method for cleanup
-    - Forwards all arguments to underlying ChromaClient
-
-    Example:
-        >>> # Get singleton instance (creates on first call)
-        >>> client = ChromaClientSingleton.get_instance()
-        >>> collection = client.get_or_create_collection()
-        >>>
-        >>> # Subsequent calls return same instance
-        >>> same_client = ChromaClientSingleton.get_instance()
-        >>> assert client is same_client
-        >>>
-        >>> # Reset for testing (use with caution)
-        >>> ChromaClientSingleton.reset_instance()
-    """
+    """Thread-safe singleton for ChromaClient. Prevents multiple PersistentClient connections."""
 
     # Singleton instance (None until first get_instance() call)
     _instance: ChromaClient | None = None

@@ -1,36 +1,8 @@
 """
-HybridMatchingEngine - Two-Stage Matching Pipeline.
+HybridMatchingEngine — two-stage HVAC matching pipeline.
 
-Combines Stage 1 (semantic retrieval) with Stage 2 (precise scoring) for
-efficient and accurate HVAC description matching.
-
-Architecture:
-    Stage 1 (Retrieval): SemanticRetriever narrows down candidates
-        - Input: Thousands of reference descriptions in vector database
-        - Process: Semantic similarity search + metadata filters
-        - Output: Top-K most similar candidates (~20)
-        - Performance: ~100-200ms
-
-    Stage 2 (Scoring): SimpleMatchingEngine scores candidates
-        - Input: Top-K candidates from Stage 1
-        - Process: Hybrid scoring (40% param + 60% semantic)
-        - Output: Best match above threshold or None
-        - Performance: ~50-100ms for 20 candidates
-
-    Total: < 2s per match (meets performance target)
-
-Responsibility:
-    - Implement MatchingEngineProtocol (async interface)
-    - Orchestrate SemanticRetriever + SimpleMatchingEngine
-    - Build metadata filters from extracted parameters
-    - Fallback to no-filter retrieval if needed
-    - Convert between RetrievalResult and HVACDescription
-
-Architecture Notes:
-    - Part of Infrastructure Layer (depends on AI services)
-    - Implements Domain Protocol (MatchingEngineProtocol)
-    - Uses Dependency Injection for retriever and scoring engine
-    - Async interface (future-proof for API calls)
+Stage 1: SemanticRetriever → top-K candidates (~20) from ChromaDB (~100-200ms).
+Stage 2: SimpleMatchingEngine → hybrid score (40% param + 60% semantic) on candidates (~50-100ms).
 """
 
 import logging
@@ -50,65 +22,10 @@ logger = logging.getLogger(__name__)
 
 class HybridMatchingEngine:
     """
-    Two-stage matching pipeline combining semantic retrieval with precise scoring.
+    Implements MatchingEngineProtocol via two-stage pipeline.
 
-    This engine implements the MatchingEngineProtocol using a two-stage approach:
-    1. Stage 1 (Retrieval): Use SemanticRetriever to narrow down candidates
-    2. Stage 2 (Scoring): Use SimpleMatchingEngine to score and select best match
-
-    This architecture provides:
-    - Performance: Only score top-K candidates (not all references)
-    - Accuracy: Semantic search finds relevant candidates, hybrid scoring ensures correctness
-    - Scalability: Handles thousands of references efficiently
-
-    Algorithm (Two-Stage Matching):
-        1. Extract parameters from source description
-        2. Build metadata filters (DN, PN if available)
-        3. Retrieve top-K candidates using semantic search + filters
-        4. Fallback: If no candidates, retry without filters
-        5. Convert candidates to HVACDescription objects
-        6. Score candidates using SimpleMatchingEngine
-        7. Return best match above threshold or None
-
-    Dependencies:
-        - semantic_retriever: SemanticRetrieverProtocol for Stage 1
-        - simple_matching_engine: SimpleMatchingEngine for Stage 2
-        - config: MatchingConfig for thresholds and weights
-
-    Performance Target:
-        - Stage 1 (retrieval): < 200ms
-        - Stage 2 (scoring): < 100ms for 20 candidates
-        - Total: < 2s per match
-
-    Examples:
-        >>> # Setup dependencies (typically via DI container)
-        >>> from src.infrastructure.ai.embeddings import EmbeddingService
-        >>> from src.infrastructure.ai.vector_store import ChromaClient
-        >>> from src.infrastructure.ai.retrieval import SemanticRetriever
-        >>> from src.domain.hvac.services import SimpleMatchingEngine
-        >>>
-        >>> embedding_service = EmbeddingService()
-        >>> chroma_client = ChromaClient()
-        >>> retriever = SemanticRetriever(embedding_service, chroma_client)
-        >>> scorer = SimpleMatchingEngine(parameter_extractor, config, embedding_service)
-        >>>
-        >>> engine = HybridMatchingEngine(
-        ...     semantic_retriever=retriever,
-        ...     simple_matching_engine=scorer,
-        ...     config=config
-        ... )
-        >>>
-        >>> # Match working description against catalog
-        >>> source = HVACDescription(raw_text="Zawór kulowy DN50 PN16")
-        >>> result = await engine.match(
-        ...     working_description=source,
-        ...     reference_descriptions=[],  # Not used in hybrid mode
-        ...     threshold=75.0
-        ... )
-        >>>
-        >>> if result:
-        ...     print(f"Match found: {result.score.final_score}%")
-        ...     print(f"Confidence: {result.confidence}")
+    reference_file_id: if set, filters ChromaDB queries to a single file,
+        preventing stale matches from previous indexing sessions.
     """
 
     def __init__(
@@ -119,23 +36,9 @@ class HybridMatchingEngine:
         reference_file_id: str | None = None,
     ) -> None:
         """
-        Initialize hybrid matching engine with dependencies.
-
         Args:
-            semantic_retriever: Retriever for Stage 1 (candidate retrieval)
-            simple_matching_engine: Scorer for Stage 2 (precise matching)
-            config: Optional configuration (defaults to MatchingConfig.default())
-            reference_file_id: Optional file_id to filter ChromaDB queries.
-                If provided, only searches within this specific reference file.
-                This prevents matches from other files in the database (e.g., from previous test runs).
-
-        Examples:
-            >>> engine = HybridMatchingEngine(
-            ...     semantic_retriever=retriever,
-            ...     simple_matching_engine=scorer,
-            ...     config=MatchingConfig.default(),
-            ...     reference_file_id="3e5bc285-b710-4b5f-911e-58d2524bfce8"
-            ... )
+            reference_file_id: If set, restricts ChromaDB search to this file only
+                (prevents cross-file matches from previous indexing sessions).
         """
         self.semantic_retriever = semantic_retriever
         self.simple_matching_engine = simple_matching_engine
@@ -154,54 +57,10 @@ class HybridMatchingEngine:
         threshold: float = 75.0,
     ) -> Optional[MatchResult]:
         """
-        Match working description using two-stage pipeline.
+        Run two-stage match. reference_descriptions is unused (candidates come from ChromaDB).
 
-        Stage 1 (Retrieval):
-            - Extract parameters from source
-            - Build metadata filters (DN, PN if available)
-            - Retrieve top-K candidates using semantic search
-            - Fallback to no-filter search if no candidates found
-
-        Stage 2 (Scoring):
-            - Convert candidates to HVACDescription objects
-            - Score each candidate using SimpleMatchingEngine
-            - Select best match above threshold
-            - Calculate confidence based on score gap
-
-        Args:
-            working_description: Source description to match
-            reference_descriptions: NOT USED in hybrid mode (uses vector DB)
-            threshold: Minimum score for valid match (0-100)
-
-        Returns:
-            MatchResult if best match >= threshold, None otherwise
-
-        Raises:
-            ValueError: If working_description has no text
-            RuntimeError: If retrieval or scoring fails
-
-        Examples:
-            >>> source = HVACDescription(raw_text="Zawór kulowy DN50 PN16")
-            >>> result = await engine.match(source, [], threshold=75.0)
-            >>> if result:
-            ...     print(f"Match: {result.score.final_score}%")
-
-        Caching strategy:
-            Source embeddings are NOT cached per-batch in HybridMatchingEngine.
-            Instead, each call to match() generates a fresh embedding for the working description.
-
-            Rationale:
-            - Working descriptions are typically processed in sequential batches by matching_tasks
-            - Caching would require state management (breaking stateless design)
-            - EmbeddingService itself may implement internal caching (model-level)
-
-            For batch processing optimization, consider using SimpleMatchingEngine.match_batch()
-            which does implement source embedding caching.
-
-        Performance:
-            - Stage 1: ~100-200ms (semantic retrieval)
-            - Stage 2: ~50-100ms (scoring 20 candidates)
-            - Total: < 2s target
+        Raises ValueError if working_description has no raw_text.
+        Returns None if Stage 1 returns no candidates or Stage 2 finds no match above threshold.
         """
         logger.info(
             f"Starting two-stage matching for: {working_description.raw_text[:50]}..."
@@ -272,23 +131,7 @@ class HybridMatchingEngine:
     async def calculate_confidence(
         self, best_score: float, second_best_score: Optional[float]
     ) -> float:
-        """
-        Calculate confidence based on score gap.
-
-        Delegates to SimpleMatchingEngine.calculate_confidence().
-
-        Args:
-            best_score: Final score of best match (0-100)
-            second_best_score: Final score of second-best, or None
-
-        Returns:
-            Confidence level (0-1)
-
-        Examples:
-            >>> confidence = await engine.calculate_confidence(95.0, 70.0)
-            >>> confidence
-            1.0  # Large gap → high confidence
-        """
+        """Delegates to SimpleMatchingEngine.calculate_confidence()."""
         return self.simple_matching_engine.calculate_confidence(
             best_score, second_best_score
         )
@@ -297,22 +140,8 @@ class HybridMatchingEngine:
         self, source_description: HVACDescription
     ) -> list[RetrievalResult]:
         """
-        Stage 1: Retrieve top-K candidates using semantic search.
-
-        Process:
-            1. Extract parameters from source
-            2. Build metadata filters (DN, PN if available)
-            3. Retrieve candidates with filters
-            4. Fallback: If no candidates, retry without filters
-
-        Args:
-            source_description: Source to retrieve candidates for
-
-        Returns:
-            List of RetrievalResult from semantic search
-
-        Note:
-            Uses config.retrieval_top_k for number of candidates (default: 20)
+        Stage 1: retrieve top-K candidates. Applies DN/PN + file_id filters;
+        falls back to file_id-only filter when full-filter search returns nothing.
         """
         # Extract parameters if not already done
         if not source_description.has_parameters():
@@ -374,34 +203,7 @@ class HybridMatchingEngine:
     def _build_metadata_filters(
         self, source_description: HVACDescription
     ) -> dict[str, Any] | None:
-        """
-        Build metadata filters from extracted parameters.
-
-        Filter strategy:
-            - Include DN if extracted (critical parameter)
-            - Include PN if extracted (important parameter)
-            - Skip other parameters (too restrictive)
-
-        Args:
-            source_description: Source with extracted parameters
-
-        Returns:
-            Dict of filters or None if no filters available
-
-        Examples:
-            >>> # With DN and PN
-            >>> source = HVACDescription(raw_text="Zawór DN50 PN16")
-            >>> source.extract_parameters(extractor)
-            >>> filters = engine._build_metadata_filters(source)
-            >>> filters
-            {"dn": "50", "pn": "16"}
-
-            >>> # No parameters
-            >>> source = HVACDescription(raw_text="Zawór kulowy")
-            >>> filters = engine._build_metadata_filters(source)
-            >>> filters
-            None
-        """
+        """Build {"dn": "50", "pn": "16"} filters from extracted params. DN and PN only — other params are too restrictive."""
         if not source_description.has_parameters():
             return None
 
@@ -425,23 +227,7 @@ class HybridMatchingEngine:
     def _convert_candidates_to_descriptions(
         self, candidates: list[RetrievalResult]
     ) -> list[HVACDescription]:
-        """
-        Convert RetrievalResult objects to HVACDescription for Stage 2.
-
-        Creates HVACDescription entities from retrieval results with:
-        - raw_text from reference_text
-        - file_id and source_row_number from parsed description_id
-        - metadata preserved
-
-        Args:
-            candidates: List of RetrievalResult from Stage 1
-
-        Returns:
-            List of HVACDescription ready for scoring
-
-        Note:
-            Parameters will be extracted during scoring if needed
-        """
+        """Convert RetrievalResult list to HVACDescription list for Stage 2 scoring."""
         descriptions = []
 
         for candidate in candidates:

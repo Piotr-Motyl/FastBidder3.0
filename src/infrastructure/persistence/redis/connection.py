@@ -1,46 +1,8 @@
 """
-Redis Connection Pool Management.
+Redis connection pool management.
 
-Provides singleton connection pool for Redis with health checks and retry logic.
-Used by RedisProgressTracker and other Redis-based services.
-
-Responsibility:
-    - Manage Redis connection pool (max 10 connections)
-    - Health check with PING
-    - Retry logic with exponential backoff
-    - Thread-safe singleton pattern
-
-Architecture Notes:
-    - Infrastructure Layer (external dependency on Redis)
-    - Singleton pattern for connection pool reuse
-    - Thread-safe with threading.Lock
-    - Environment-based configuration
-
-Business Rules:
-    - Max connections: 10 (configurable via REDIS_MAX_CONNECTIONS)
-    - Connection timeout: 5s (configurable via REDIS_TIMEOUT)
-    - Retry attempts: 3 (configurable via REDIS_RETRY_ATTEMPTS)
-    - Exponential backoff: 1s, 2s, 4s (base=1s, multiplier=2)
-    - Socket keepalive: enabled (default Redis behavior)
-    - Decode responses: True (return strings not bytes)
-
-Error Handling:
-    - ConnectionError: Log and retry with exponential backoff
-    - TimeoutError: Log and retry
-    - RedisError: Log and raise after all retries exhausted
-    - Health check failure: Return False (don't raise exception)
-
-Examples:
-    >>> # Get Redis client (creates pool on first call)
-    >>> client = get_redis_client()
-    >>> client.set("key", "value")
-    >>>
-    >>> # Health check
-    >>> if health_check():
-    ...     print("Redis is healthy")
-    >>>
-    >>> # Cleanup on shutdown
-    >>> close_connections()
+Singleton pool (max 10 connections), retry with exponential backoff (1s, 2s, 4s).
+Config from env: REDIS_HOST, REDIS_PORT, REDIS_MAX_CONNECTIONS, REDIS_TIMEOUT, REDIS_RETRY_ATTEMPTS.
 """
 
 import logging
@@ -68,41 +30,10 @@ def get_redis_client(
     timeout: Optional[int] = None,
 ) -> Redis:
     """
-    Get Redis client with connection pooling (singleton pattern).
+    Return Redis client with singleton connection pool.
 
-    Creates connection pool on first call, reuses pool on subsequent calls.
-    Thread-safe using lock. Implements retry logic with exponential backoff.
-
-    Args:
-        host: Redis hostname (default from env: REDIS_HOST or "localhost")
-        port: Redis port (default from env: REDIS_PORT or 6379)
-        db: Redis database number (default 0)
-        max_connections: Max pool size (default from env: REDIS_MAX_CONNECTIONS or 10)
-        timeout: Connection timeout in seconds (default from env: REDIS_TIMEOUT or 5)
-
-    Returns:
-        Redis client instance with connection pool
-
-    Raises:
-        RedisError: If connection fails after all retry attempts
-
-    Examples:
-        >>> # Get client with defaults (from environment)
-        >>> client = get_redis_client()
-        >>>
-        >>> # Get client with custom settings
-        >>> client = get_redis_client(host="redis.example.com", port=6380, db=1)
-        >>>
-        >>> # Use client
-        >>> client.set("key", "value")
-        >>> value = client.get("key")
-
-    Implementation Details:
-        - Singleton pattern: pool created once, reused across calls
-        - Thread-safe: uses threading.Lock for pool creation
-        - Retry logic: 3 attempts with exponential backoff (1s, 2s, 4s)
-        - Decode responses: True (returns strings not bytes)
-        - Socket keepalive: enabled for connection health
+    Creates pool on first call (thread-safe), reuses on subsequent calls.
+    Raises RedisError after REDIS_RETRY_ATTEMPTS failed pings (exponential backoff).
     """
     global _redis_pool
 
@@ -174,28 +105,7 @@ def get_redis_client(
 
 
 def health_check() -> bool:
-    """
-    Check Redis health with PING test.
-
-    Tests connection to Redis server by sending PING command.
-    Returns True if Redis responds with PONG, False otherwise.
-
-    Returns:
-        True if Redis is healthy (PING successful), False otherwise
-
-    Examples:
-        >>> # Check if Redis is available
-        >>> if health_check():
-        ...     print("Redis is healthy")
-        ... else:
-        ...     print("Redis is down or unreachable")
-
-    Implementation Details:
-        - Uses get_redis_client() to get pooled connection
-        - Sends PING command to Redis
-        - Returns False on any error (doesn't raise exception)
-        - Logs warning on health check failure
-    """
+    """Return True if Redis PING succeeds, False otherwise (never raises)."""
     try:
         # Get Redis client from pool
         client = get_redis_client()
@@ -221,25 +131,7 @@ def health_check() -> bool:
 
 
 def close_connections() -> None:
-    """
-    Close all Redis connections in the pool.
-
-    Closes connection pool and resets singleton. Should be called on application
-    shutdown to gracefully close all connections.
-
-    Thread-safe using lock.
-
-    Examples:
-        >>> # On application shutdown
-        >>> close_connections()
-
-    Implementation Details:
-        - Thread-safe: uses threading.Lock
-        - Resets global _redis_pool to None
-        - Calls disconnect() on connection pool
-        - Logs closure operation
-        - Safe to call multiple times (idempotent)
-    """
+    """Disconnect all connections and reset singleton pool. Safe to call multiple times."""
     global _redis_pool
 
     with _pool_lock:

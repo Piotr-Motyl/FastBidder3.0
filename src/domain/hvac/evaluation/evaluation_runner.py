@@ -1,20 +1,10 @@
 """
-Evaluation Runner for Matching Quality Metrics (Phase 4).
+Evaluation Runner for Matching Quality Metrics.
 
 Runs matching engine on golden dataset and calculates quality metrics:
 - Recall@K: Percentage of correct references found in top-K results
 - Precision@1: Percentage where top-1 match is correct
 - MRR (Mean Reciprocal Rank): Average inverse rank of correct match
-
-Usage:
-    >>> from src.domain.hvac.evaluation.golden_dataset import load_golden_dataset
-    >>> from src.infrastructure.matching.hybrid_matching_engine import HybridMatchingEngine
-    >>> from src.infrastructure.ai.retrieval.semantic_retriever import SemanticRetriever
-    >>>
-    >>> dataset = load_golden_dataset("data/golden_dataset.json")
-    >>> runner = EvaluationRunner(semantic_retriever, matching_engine)
-    >>> report = await runner.evaluate(dataset, threshold=75.0, top_k_values=[1, 3, 5])
-    >>> print(report.to_markdown())
 """
 
 import logging
@@ -36,19 +26,19 @@ logger = logging.getLogger(__name__)
 class SemanticRetrieverProtocol(Protocol):
     """Protocol for semantic retriever (Stage 1 of matching pipeline)."""
 
-    async def search_similar(
+    def retrieve(
         self,
         query_text: str,
-        top_k: int = 10,
-        metadata_filters: dict[str, Any] | None = None,
+        filters: dict[str, Any] | None = None,
+        top_k: int = 20,
     ) -> list[Any]:
         """
-        Search for similar documents in vector database.
+        Retrieve top-K most similar descriptions from the vector database.
 
         Args:
             query_text: Text to search for
+            filters: Optional metadata filters (e.g., {"dn": "50", "pn": "16"})
             top_k: Number of results to return
-            metadata_filters: Optional filters (e.g., {"dn": "50", "pn": "16"})
 
         Returns:
             List of RetrievalResult objects
@@ -67,11 +57,6 @@ class MatchingEngineProtocol(Protocol):
     ) -> Optional[Any]:
         """
         Find best match for working description.
-
-        Args:
-            working_description: Description to match
-            reference_descriptions: Candidate descriptions (can be empty for hybrid)
-            threshold: Minimum score threshold
 
         Returns:
             MatchResult or None if no match above threshold
@@ -134,18 +119,7 @@ class EvaluationReport:
     average_match_time: float = 0.0
 
     def to_markdown(self) -> str:
-        """
-        Generate markdown report.
-
-        Returns:
-            Markdown-formatted evaluation report
-
-        Examples:
-            >>> report = EvaluationReport(...)
-            >>> print(report.to_markdown())
-            # Evaluation Report
-            ...
-        """
+        """Generate markdown-formatted evaluation report."""
         lines = []
         lines.append("# Evaluation Report")
         lines.append("")
@@ -220,17 +194,6 @@ class EvaluationRunner:
 
     Evaluates matching quality by running matching engine on golden dataset
     and calculating metrics (Recall@K, Precision@1, MRR).
-
-    Examples:
-        >>> runner = EvaluationRunner(semantic_retriever, matching_engine)
-        >>> report = await runner.evaluate(
-        ...     golden_dataset=dataset,
-        ...     threshold=75.0,
-        ...     top_k_values=[1, 3, 5, 10],
-        ...     progress_callback=lambda current, total: print(f"{current}/{total}")
-        ... )
-        >>> print(f"Precision@1: {report.precision_at_1:.2%}")
-        >>> print(f"Recall@5: {report.recall_at_k[5]:.2%}")
     """
 
     def __init__(
@@ -266,10 +229,6 @@ class EvaluationRunner:
 
         Returns:
             EvaluationReport with metrics and failed pairs
-
-        Examples:
-            >>> report = await runner.evaluate(dataset, threshold=75.0)
-            >>> print(report.to_markdown())
         """
         if top_k_values is None:
             top_k_values = [1, 3, 5, 10]
@@ -427,15 +386,7 @@ class EvaluationRunner:
         return report
 
     def _create_working_description(self, pair: GoldenPair) -> HVACDescription:
-        """
-        Create HVACDescription from GoldenPair working text.
-
-        Args:
-            pair: Golden pair
-
-        Returns:
-            HVACDescription instance
-        """
+        """Create HVACDescription from GoldenPair working text."""
         # Create description with minimal required fields
         from uuid import uuid4
 
@@ -452,11 +403,7 @@ class EvaluationRunner:
         """
         Calculate Recall@K for different K values.
 
-        Recall@K = % of cases where correct reference is in top-K results
-
-        Args:
-            retrieval_results: List of retrieval result dicts
-            top_k_values: K values to calculate recall for
+        Recall@K = % of cases where correct reference is in top-K results.
 
         Returns:
             Dict mapping K -> Recall@K
@@ -477,17 +424,7 @@ class EvaluationRunner:
         return recall_at_k
 
     def _calculate_precision_at_1(self, matching_results: list[dict[str, Any]]) -> float:
-        """
-        Calculate Precision@1 (top-1 accuracy).
-
-        Precision@1 = % of cases where top-1 match is correct
-
-        Args:
-            matching_results: List of matching result dicts
-
-        Returns:
-            Precision@1 value
-        """
+        """Calculate Precision@1: % of cases where top-1 match is correct."""
         if not matching_results:
             return 0.0
 
@@ -498,14 +435,7 @@ class EvaluationRunner:
         """
         Calculate Mean Reciprocal Rank (MRR).
 
-        MRR = average of (1/rank) for correct matches
-        If correct reference not found, contributes 0.
-
-        Args:
-            retrieval_results: List of retrieval result dicts
-
-        Returns:
-            MRR value
+        MRR = average of (1/rank) for correct matches; 0 if not found.
         """
         if not retrieval_results:
             return 0.0
@@ -527,17 +457,7 @@ class EvaluationRunner:
         matching_results: list[dict[str, Any]],
         top_k_values: list[int],
     ) -> dict[str, dict[str, float]]:
-        """
-        Calculate metrics broken down by difficulty level.
-
-        Args:
-            retrieval_results: List of retrieval result dicts
-            matching_results: List of matching result dicts
-            top_k_values: K values for Recall@K
-
-        Returns:
-            Dict mapping difficulty -> metrics dict
-        """
+        """Calculate metrics (Precision@1, MRR, Recall@K) broken down by difficulty level."""
         metrics_by_difficulty = {}
 
         for difficulty in ["easy", "medium", "hard"]:

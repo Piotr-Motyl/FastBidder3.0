@@ -22,74 +22,24 @@ logger = logging.getLogger(__name__)
 
 class EmbeddingService:
     """
-    Embedding service using sentence-transformers.
+    sentence-transformers embedding service. Lazy-loads model on first use (~420MB, cached).
 
-    Implements EmbeddingServiceProtocol from domain layer.
-    Uses paraphrase-multilingual-MiniLM-L12-v2 model by default.
-
-    Key features:
-    - Lazy-loads model on first use to avoid startup delay (not in __init__)
-    - Supports GPU acceleration when available (automatic detection)
-    - Batch processing with configurable batch size
-    - Deterministic embeddings (same text = same vector)
-    - ~420MB model download on first use (cached afterwards)
-
-    Performance targets:
-    - embed_single(): < 100ms on CPU, < 10ms on GPU
-    - embed_batch(100): < 10s on CPU, < 1s on GPU
-
-    Example:
-        >>> service = EmbeddingService()  # Model NOT loaded yet
-        >>> embedding = service.embed_single("Zawór kulowy DN50")  # NOW model loads
-        >>> len(embedding)
-        384
-        >>> embeddings = service.embed_batch(["Text 1", "Text 2"])
-        >>> len(embeddings)
-        2
+    Default model: paraphrase-multilingual-MiniLM-L12-v2 (384-dim, Polish + English).
+    GPU auto-detected; falls back to CPU.
     """
 
     # Default model: multilingual, 384-dim, ~420MB, supports Polish & English
     DEFAULT_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
 
     def __init__(self, model_name: str | None = None) -> None:
-        """
-        Initialize embedding service.
-
-        Model is NOT loaded here - it will be lazy-loaded on first use.
-        This avoids ~2-5 second startup delay when service is created but not used.
-
-        Args:
-            model_name: Model identifier from sentence-transformers.
-                Defaults to paraphrase-multilingual-MiniLM-L12-v2.
-
-        Example:
-            >>> service = EmbeddingService()  # Fast, no model loading
-            >>> service = EmbeddingService("all-MiniLM-L6-v2")  # Custom model
-        """
+        """Model not loaded here — lazy-loads on first embed call (~2-5s delay on first use)."""
         self.model_name = model_name or self.DEFAULT_MODEL
         self._model: SentenceTransformer | None = None
         logger.info(f"EmbeddingService initialized with model: {self.model_name}")
 
     @property
     def model(self) -> SentenceTransformer:
-        """
-        Lazy-load and cache the sentence-transformers model.
-
-        Model is loaded on first access, not at __init__.
-        This avoids startup delay when service is created but not immediately used.
-
-        GPU detection is automatic:
-        - If CUDA available: uses GPU
-        - Otherwise: uses CPU
-
-        Returns:
-            Loaded SentenceTransformer model instance.
-
-        Example:
-            >>> service = EmbeddingService()
-            >>> model = service.model  # First access: loads model (~2-5s)
-            >>> model = service.model  # Second access: returns cached model (instant)
-        """
+        """Lazy-load and cache model. First access takes ~2-5s; subsequent accesses instant."""
         if self._model is None:
             logger.info(f"Loading sentence-transformers model: {self.model_name}")
             logger.info("This may take 2-5 seconds on first use (model download + loading)")
@@ -110,29 +60,7 @@ class EmbeddingService:
         return self._model
 
     def embed_single(self, text: str) -> list[float]:
-        """
-        Generate embedding vector for single text.
-
-        Text is trimmed before embedding. Empty or whitespace-only text raises ValueError.
-        Model is lazy-loaded on first call.
-
-        Args:
-            text: Input text to embed.
-
-        Returns:
-            Embedding vector as list of floats (384 dimensions for default model).
-
-        Raises:
-            ValueError: If text is empty or whitespace-only after trimming.
-
-        Example:
-            >>> service = EmbeddingService()
-            >>> embedding = service.embed_single("Zawór kulowy DN50 PN16 mosiądz")
-            >>> len(embedding)
-            384
-            >>> isinstance(embedding[0], float)
-            True
-        """
+        """Embed single text. Raises ValueError for empty/whitespace input."""
         # Trim whitespace
         text = text.strip()
 
@@ -150,32 +78,7 @@ class EmbeddingService:
         texts: list[str],
         batch_size: int = 32,
     ) -> list[list[float]]:
-        """
-        Generate embeddings for multiple texts (batch processing).
-
-        Batch processing is significantly faster than calling embed_single() in a loop:
-        - 100 texts: ~10s batch vs ~60s individual (6x speedup)
-        - Shares GPU memory allocation across batch
-
-        Args:
-            texts: List of texts to embed.
-            batch_size: Number of texts to process at once.
-                Smaller = less memory, larger = faster.
-                Default: 32 (good balance for 4GB GPU).
-
-        Returns:
-            List of embedding vectors. Length equals len(texts).
-            Empty input returns empty list.
-
-        Example:
-            >>> service = EmbeddingService()
-            >>> texts = ["Zawór DN50", "Rura PVC 160", "Klapka zwrotna DN100"]
-            >>> embeddings = service.embed_batch(texts)
-            >>> len(embeddings) == len(texts)
-            True
-            >>> all(len(emb) == 384 for emb in embeddings)
-            True
-        """
+        """Embed multiple texts in one batch (~6× faster than N embed_single() calls)."""
         # Handle empty input
         if not texts:
             return []
@@ -227,25 +130,10 @@ class EmbeddingService:
 
 class EmbeddingServiceSingleton:
     """
-    Thread-safe Singleton wrapper for EmbeddingService.
+    Thread-safe singleton for EmbeddingService.
 
-    Ensures only one EmbeddingService (and therefore one loaded ML model) exists
-    throughout the application/worker lifecycle. Critical for Celery workers running
-    with --pool=solo: without this, every task creates a fresh EmbeddingService and
-    re-loads the ~420MB sentence-transformers model (~30-60s per task).
-
-    Mirrors the ChromaClientSingleton pattern from chroma_client.py.
-
-    Example:
-        >>> service = EmbeddingServiceSingleton.get_instance()
-        >>> embedding = service.embed_single("Zawór kulowy DN50")
-        >>>
-        >>> # Returns same instance (model already loaded)
-        >>> same = EmbeddingServiceSingleton.get_instance()
-        >>> assert service is same
-        >>>
-        >>> # Reset for testing only
-        >>> EmbeddingServiceSingleton.reset_instance()
+    Critical for Celery --pool=solo workers: without this, each task would reload the
+    ~420MB model (30-60s penalty per task). Uses double-checked locking.
     """
 
     _instance: EmbeddingService | None = None
@@ -253,19 +141,7 @@ class EmbeddingServiceSingleton:
 
     @classmethod
     def get_instance(cls, model_name: str | None = None) -> EmbeddingService:
-        """
-        Get or create the singleton EmbeddingService instance.
-
-        Thread-safe lazy initialization using double-checked locking.
-        First call creates instance; subsequent calls return existing instance.
-        Model is still lazy-loaded on first embed call (not here).
-
-        Args:
-            model_name: Optional model override. Only used on first call.
-
-        Returns:
-            EmbeddingService singleton instance.
-        """
+        """Return singleton instance. model_name only applies on first call."""
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -275,12 +151,7 @@ class EmbeddingServiceSingleton:
 
     @classmethod
     def reset_instance(cls) -> None:
-        """
-        Reset the singleton instance (for testing purposes only).
-
-        Releases the loaded model so the next get_instance() call creates a fresh one.
-        WARNING: Do not call in production — causes full model reload on next use.
-        """
+        """Reset singleton (testing only). Next get_instance() reloads the model."""
         with cls._lock:
             if cls._instance is not None:
                 cls._instance = None

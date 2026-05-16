@@ -1,20 +1,6 @@
 """
-ConcreteParameterExtractor - Implementation of ParameterExtractorProtocol
-
-Concrete implementation of HVAC parameter extraction using regex patterns
-and domain dictionaries. Extracts technical parameters (DN, PN, valve type,
-material, drive type, voltage, manufacturer) from text descriptions.
-
-Architecture Notes:
-- Part of Infrastructure Layer (implements Domain Protocol)
-- Implements ParameterExtractorProtocol (dependency inversion)
-- Stateless service (no internal state between calls)
-- Uses domain patterns and constants (separation of concerns)
-- Returns ExtractedParameters Value Object
-
-Performance:
-- Target: <5ms per extraction
-- No external API calls (all local regex/dict matching)
+ConcreteParameterExtractor — stateless implementation of ParameterExtractorProtocol.
+Uses regex patterns and domain dictionaries. No external API calls; target <5ms per call.
 """
 
 from typing import Optional
@@ -38,49 +24,10 @@ from src.domain.hvac.value_objects.extracted_parameters import ExtractedParamete
 
 
 class ConcreteParameterExtractor:
-    """
-    Concrete implementation of ParameterExtractorProtocol.
-
-    Extracts HVAC technical parameters from text descriptions using:
-    - Regex patterns for DN, PN, voltage
-    - Dictionary matching for valve type, material, drive type, manufacturer
-    - Synonym resolution for canonical forms
-    - Confidence scoring (0.0-1.0) for each extraction
-
-    This is a stateless service - no internal state between calls.
-    Each extraction is independent and doesn't affect others.
-
-    Examples:
-        >>> extractor = ConcreteParameterExtractor()
-        >>> text = "Zawór kulowy DN50 PN16 mosiądz napęd elektryczny 230V KSB"
-        >>> params = extractor.extract_parameters(text)
-        >>> params.dn
-        50
-        >>> params.valve_type
-        'kulowy'
-        >>> params.get_average_confidence()
-        0.95
-    """
+    """Extracts DN/PN (regex), valve type/material/drive/manufacturer (dict + synonym resolution)."""
 
     def extract_parameters(self, text: str) -> ExtractedParameters:
-        """
-        Extract all HVAC parameters from text description.
-
-        Main orchestration method that calls all specific extraction methods
-        and combines results into a single ExtractedParameters object.
-
-        Args:
-            text: HVAC equipment description text
-
-        Returns:
-            ExtractedParameters with all extracted values and confidence scores
-
-        Algorithm:
-            1. Normalize text (lowercase, trim, remove double spaces)
-            2. Extract DN, PN, valve_type, material, drive_type, voltage, manufacturer
-            3. Build confidence_scores dict (only non-None values)
-            4. Return ExtractedParameters object
-        """
+        """Normalize text then extract all parameters; returns ExtractedParameters with confidence scores."""
         # 1. Normalize text for consistent matching
         normalized = normalize_text(text)
 
@@ -123,39 +70,13 @@ class ConcreteParameterExtractor:
         )
 
     def extract_dn(self, text: str) -> tuple[Optional[int], float]:
-        """
-        Extract DN (Diameter Nominal) value from text.
-
-        Args:
-            text: Text to search for DN value
-
-        Returns:
-            Tuple of (dn_value, confidence_score)
-        """
         return extract_dn_from_text(text)
 
     def extract_pn(self, text: str) -> tuple[Optional[int], float]:
-        """
-        Extract PN (Pressure Nominal) value from text.
-
-        Args:
-            text: Text to search for PN value
-
-        Returns:
-            Tuple of (pn_value, confidence_score)
-        """
         return extract_pn_from_text(text)
 
     def extract_valve_type(self, text: str) -> tuple[Optional[str], float]:
-        """
-        Extract valve type from text using dictionary matching.
-
-        Args:
-            text: Text to search for valve type (will be normalized)
-
-        Returns:
-            Tuple of (valve_type, confidence_score)
-        """
+        """Longest-match dictionary search; synonyms resolved to canonical form."""
         normalized_text = normalize_text(text)
         sorted_valve_types = sorted(VALVE_TYPES, key=len, reverse=True)
 
@@ -170,15 +91,6 @@ class ConcreteParameterExtractor:
         return None, 0.0
 
     def extract_material(self, text: str) -> tuple[Optional[str], float]:
-        """
-        Extract material from text using dictionary matching.
-
-        Args:
-            text: Text to search for material (will be normalized)
-
-        Returns:
-            Tuple of (material, confidence_score)
-        """
         normalized_text = normalize_text(text)
         sorted_materials = sorted(MATERIALS, key=len, reverse=True)
 
@@ -193,15 +105,6 @@ class ConcreteParameterExtractor:
         return None, 0.0
 
     def extract_drive_type(self, text: str) -> tuple[Optional[str], float]:
-        """
-        Extract drive/actuation type from text using dictionary matching.
-
-        Args:
-            text: Text to search for drive type (will be normalized)
-
-        Returns:
-            Tuple of (drive_type, confidence_score)
-        """
         normalized_text = normalize_text(text)
         sorted_drive_types = sorted(DRIVE_TYPES, key=len, reverse=True)
 
@@ -216,27 +119,10 @@ class ConcreteParameterExtractor:
         return None, 0.0
 
     def extract_voltage(self, text: str) -> tuple[Optional[str], float]:
-        """
-        Extract voltage from text.
-
-        Args:
-            text: Text to search for voltage
-
-        Returns:
-            Tuple of (voltage, confidence_score)
-        """
         return extract_voltage_from_text(text)
 
     def extract_manufacturer(self, text: str) -> tuple[Optional[str], float]:
-        """
-        Extract manufacturer name from text using dictionary matching.
-
-        Args:
-            text: Text to search for manufacturer (will be normalized)
-
-        Returns:
-            Tuple of (manufacturer, confidence_score)
-        """
+        """Exact match against MANUFACTURERS dict; returns uppercase name."""
         normalized_text = normalize_text(text)
         sorted_manufacturers = sorted(MANUFACTURERS, key=len, reverse=True)
 

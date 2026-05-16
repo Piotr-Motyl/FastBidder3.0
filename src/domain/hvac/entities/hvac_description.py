@@ -1,10 +1,7 @@
 """
 HVACDescription Entity.
 
-Core domain entity representing a single HVAC product description.
-This entity has identity (UUID) and lifecycle (state transitions).
-
-Unlike Value Objects, Entities are mutable and track their state over time.
+Core domain entity representing a single HVAC product description with identity and lifecycle.
 """
 
 from dataclasses import dataclass, field
@@ -30,14 +27,7 @@ class HVACDescriptionState(str, Enum):
     """
     Lifecycle states of HVACDescription entity.
 
-    State transitions represent the processing pipeline:
     CREATED -> PARAMETERS_EXTRACTED -> MATCHED -> PRICED
-
-    States:
-        CREATED: Initial state after creation from raw text
-        PARAMETERS_EXTRACTED: Technical parameters (DN, PN, etc.) extracted
-        MATCHED: Successfully matched with reference description
-        PRICED: Price information merged from matching result
     """
 
     CREATED = "created"
@@ -51,15 +41,7 @@ class HVACDescription:
     """
     Mutable entity representing HVAC product description with lifecycle tracking.
 
-    This is a core domain entity that encapsulates:
-    - Raw textual description from Excel
-    - Extracted technical parameters (DN, PN, material, etc.)
-    - Matching results and scores
-    - Price information from reference catalog
-    - Processing state tracking
-
-    The entity follows a state machine pattern:
-    CREATED -> PARAMETERS_EXTRACTED -> MATCHED -> PRICED
+    State machine: CREATED -> PARAMETERS_EXTRACTED -> MATCHED -> PRICED
 
     Attributes:
         id: Unique identifier (UUID4, auto-generated, domain entity ID)
@@ -73,19 +55,6 @@ class HVACDescription:
         state: Current processing state
         created_at: Entity creation timestamp
         updated_at: Last modification timestamp
-
-    Examples:
-        >>> desc = HVACDescription(
-        ...     raw_text="Zawór kulowy DN50 PN16 mosiężny",
-        ...     source_row_number=10,
-        ...     file_id=UUID("...")
-        ... )
-        >>> desc.state
-        <HVACDescriptionState.CREATED: 'created'>
-        >>> desc.is_valid()
-        True
-        >>> desc.has_parameters()
-        False
     """
 
     # Required fields
@@ -117,9 +86,6 @@ class HVACDescription:
         """
         Validate and normalize entity after initialization.
 
-        Called automatically by dataclass after __init__.
-        Performs validation and text normalization.
-
         Raises:
             InvalidHVACDescriptionError: If raw_text is invalid
         """
@@ -136,10 +102,6 @@ class HVACDescription:
         """
         Factory method to create HVACDescription from Excel row data.
 
-        Creates a new HVACDescription entity with metadata from Excel source.
-        This is the recommended way to create descriptions from Excel files
-        as it ensures proper metadata tracking.
-
         Args:
             raw_text: Description text from Excel cell
             source_row_number: Excel row number (1-based notation)
@@ -150,35 +112,6 @@ class HVACDescription:
 
         Raises:
             InvalidHVACDescriptionError: If raw_text is invalid
-                - Empty or too short (< 3 characters)
-                - Not a string
-
-        Examples:
-            >>> from uuid import UUID
-            >>> desc = HVACDescription.from_excel_row(
-            ...     raw_text="Zawór kulowy DN50 PN16 mosiężny",
-            ...     source_row_number=5,
-            ...     file_id=UUID("a3bb189e-8bf9-3888-9912-ace4e6543002")
-            ... )
-            >>> print(desc.raw_text)
-            'Zawór kulowy DN50 PN16 mosiężny'
-            >>> print(desc.source_row_number)
-            5
-            >>> print(desc.state)
-            <HVACDescriptionState.CREATED: 'created'>
-
-        Usage Pattern:
-            This factory method is used by ExcelReaderService:
-            >>> # In ExcelReaderService._create_hvac_descriptions()
-            >>> descriptions = [
-            ...     HVACDescription.from_excel_row(text, row_num, file_id)
-            ...     for text, row_num in text_with_rows
-            ... ]
-
-        Architecture Note:
-            Factory method pattern separates construction logic from entity.
-            This allows Infrastructure Layer to create entities without knowing
-            internal initialization details. Follows Clean Architecture principles.
         """
         return cls(
             raw_text=raw_text,
@@ -188,17 +121,10 @@ class HVACDescription:
 
     def _validate_text(self, text: str) -> None:
         """
-        Validate raw_text meets business rules.
-
-        Business rules:
-        - Text must be non-empty string
-        - Text must have at least MIN_TEXT_LENGTH characters (after strip)
-
-        Args:
-            text: Text to validate
+        Validate raw_text meets minimum requirements.
 
         Raises:
-            InvalidHVACDescriptionError: If validation fails
+            InvalidHVACDescriptionError: If text is not a string or is too short
         """
         if not isinstance(text, str):
             raise InvalidHVACDescriptionError(
@@ -212,26 +138,7 @@ class HVACDescription:
             )
 
     def _normalize_text(self, text: str) -> str:
-        """
-        Normalize text by removing extra whitespace.
-
-        Normalization steps:
-        1. Strip leading/trailing whitespace
-        2. Replace multiple spaces with single space
-        3. Replace tabs and newlines with spaces
-
-        Args:
-            text: Text to normalize
-
-        Returns:
-            Normalized text
-
-        Examples:
-            >>> self._normalize_text("  Zawór  DN50  ")
-            'Zawór DN50'
-            >>> self._normalize_text("Zawór\\n\\nDN50")
-            'Zawór DN50'
-        """
+        """Normalize text by stripping whitespace and collapsing multiple spaces."""
         # Replace tabs and newlines with spaces
         text = text.replace("\t", " ").replace("\n", " ").replace("\r", " ")
 
@@ -246,24 +153,8 @@ class HVACDescription:
         """
         Check if description meets minimum validity requirements.
 
-        A description is considered valid if:
-        - raw_text is not empty and >= MIN_TEXT_LENGTH
-        - source_row_number (if provided) is > 0
-        - No validation errors would be raised
-
         Returns:
-            True if description is valid, False otherwise
-
-        Examples:
-            >>> desc = HVACDescription(raw_text="Zawór DN50")
-            >>> desc.is_valid()
-            True
-            >>> desc.raw_text = ""
-            >>> desc.is_valid()
-            False
-            >>> desc = HVACDescription(raw_text="Zawór DN50", source_row_number=0)
-            >>> desc.is_valid()
-            False
+            True if raw_text is valid and source_row_number (if provided) is > 0
         """
         try:
             self._validate_text(self.raw_text)
@@ -275,53 +166,11 @@ class HVACDescription:
             return False
 
     def has_parameters(self) -> bool:
-        """
-        Check if technical parameters have been extracted.
-
-        Returns:
-            True if extracted_params is set and contains at least one parameter
-
-        Examples:
-            >>> desc = HVACDescription(raw_text="Zawór DN50")
-            >>> desc.has_parameters()
-            False
-            >>> desc.extracted_params = ExtractedParameters(dn=50, confidence_scores={"dn": 1.0})
-            >>> desc.has_parameters()
-            True
-        """
+        """Return True if extracted_params is set and contains at least one parameter."""
         return self.extracted_params is not None and self.extracted_params.has_parameters()
 
     def has_critical_parameters(self) -> bool:
-        """
-        Check if critical technical parameters (DN and PN) have been extracted.
-
-        Critical parameters are those essential for matching:
-        - DN (Diameter Nominal)
-        - PN (Pressure Nominal)
-
-        Returns:
-            True if both DN and PN are extracted and not None
-
-        Business Logic:
-            DN and PN are the most important parameters for HVAC equipment matching.
-            Without them, matching quality is significantly degraded.
-            This method is used for fast-fail logic in matching engine.
-
-        Examples:
-            >>> desc = HVACDescription(raw_text="Zawór DN50 PN16")
-            >>> desc.has_critical_parameters()
-            False  # Not extracted yet
-            >>> desc.extracted_params = ExtractedParameters(
-            ...     dn=50, pn=16, confidence_scores={"dn": 1.0, "pn": 1.0}
-            ... )
-            >>> desc.has_critical_parameters()
-            True
-            >>> desc.extracted_params = ExtractedParameters(
-            ...     dn=50, confidence_scores={"dn": 1.0}
-            ... )
-            >>> desc.has_critical_parameters()
-            False  # PN missing
-        """
+        """Return True if both DN and PN have been extracted."""
         if self.extracted_params is None:
             return False
 
@@ -334,48 +183,16 @@ class HVACDescription:
         self, extractor: "ParameterExtractorProtocol"
     ) -> None:
         """
-        Extract technical parameters from raw_text using provided extractor.
+        Extract technical parameters from raw_text and transition state.
 
-        This method orchestrates parameter extraction and state transition:
-        1. Calls extractor.extract_parameters(raw_text)
-        2. Stores extracted parameters in extracted_params field
-        3. Transitions state from CREATED to PARAMETERS_EXTRACTED
-        4. Updates updated_at timestamp
+        Calls extractor, stores result, transitions to PARAMETERS_EXTRACTED.
+        State transitions to PARAMETERS_EXTRACTED even if no params were found.
 
         Args:
             extractor: Implementation of ParameterExtractorProtocol
 
         Raises:
-            InvalidHVACDescriptionError: If extractor is None or invalid type
-
-        State Transitions:
-            CREATED -> PARAMETERS_EXTRACTED (success)
-            No state change if extraction returns empty parameters
-
-        Examples:
-            >>> from src.domain.hvac.services.concrete_parameter_extractor import ConcreteParameterExtractor
-            >>> desc = HVACDescription(raw_text="Zawór kulowy DN50 PN16")
-            >>> desc.state
-            <HVACDescriptionState.CREATED: 'created'>
-            >>> extractor = ConcreteParameterExtractor()
-            >>> desc.extract_parameters(extractor)
-            >>> desc.state
-            <HVACDescriptionState.PARAMETERS_EXTRACTED: 'parameters_extracted'>
-            >>> desc.extracted_params.dn
-            50
-            >>> desc.extracted_params.pn
-            16
-
-        Business Logic:
-            - Can only be called once (idempotent - calling again will re-extract)
-            - Extraction can return empty parameters (all None) - this is valid
-            - State transitions to PARAMETERS_EXTRACTED even if no params found
-            - This decouples extraction logic from entity (Dependency Inversion)
-
-        Architecture Note:
-            Uses Protocol (ParameterExtractorProtocol) for dependency inversion.
-            Entity doesn't know about ConcreteParameterExtractor implementation.
-            This allows testing with mock extractors.
+            InvalidHVACDescriptionError: If extractor is None
         """
         if extractor is None:
             raise InvalidHVACDescriptionError("extractor cannot be None")
@@ -389,50 +206,16 @@ class HVACDescription:
 
     def apply_match_result(self, result: MatchResult) -> None:
         """
-        Apply matching result to description.
+        Apply matching result and transition state to MATCHED.
 
-        Updates entity with matching result and transitions state to MATCHED:
-        1. Extracts MatchScore from MatchResult
-        2. Stores matched_reference_id for tracking
-        3. Transitions state from PARAMETERS_EXTRACTED to MATCHED
-        4. Updates updated_at timestamp
+        State must be PARAMETERS_EXTRACTED (enforced). Raises error otherwise.
 
         Args:
             result: MatchResult value object from matching engine
 
         Raises:
-            InvalidHVACDescriptionError: If result is None or invalid type
-            InvalidHVACDescriptionError: If state is not PARAMETERS_EXTRACTED
-
-        State Transitions:
-            PARAMETERS_EXTRACTED -> MATCHED (success)
-            Raises error if called from other states
-
-        Examples:
-            >>> desc = HVACDescription(raw_text="Zawór DN50")
-            >>> desc.state = HVACDescriptionState.PARAMETERS_EXTRACTED
-            >>> result = MatchResult(
-            ...     matched_item_id=UUID("..."),
-            ...     score=MatchScore.create(100.0, 90.0, 75.0),
-            ...     confidence=0.95,
-            ...     message="High confidence match",
-            ...     breakdown={}
-            ... )
-            >>> desc.apply_match_result(result)
-            >>> desc.state
-            <HVACDescriptionState.MATCHED: 'matched'>
-            >>> desc.match_score.final_score
-            95.2
-
-        Business Logic:
-            - Must be called AFTER extract_parameters()
-            - State must be PARAMETERS_EXTRACTED (enforced)
-            - Stores only MatchScore (not full MatchResult)
-            - matched_reference_id is stored separately for tracking
-
-        Architecture Note:
-            Enforces state machine transition rules.
-            Cannot match without extracting parameters first.
+            InvalidHVACDescriptionError: If result is None, wrong type, or state
+                is not PARAMETERS_EXTRACTED
         """
         if result is None:
             raise InvalidHVACDescriptionError("result cannot be None")
@@ -459,23 +242,7 @@ class HVACDescription:
         self.updated_at = datetime.now()
 
     def to_dict(self) -> dict[str, Any]:
-        """
-        Serialize entity to dictionary for storage/transport.
-
-        Converts entity to JSON-serializable dictionary.
-        Nested objects (MatchScore, Value Objects) are also serialized.
-
-        Returns:
-            Dictionary representation of entity
-
-        Examples:
-            >>> desc = HVACDescription(raw_text="Zawór DN50")
-            >>> data = desc.to_dict()
-            >>> data['raw_text']
-            'Zawór DN50'
-            >>> data['state']
-            'created'
-        """
+        """Serialize entity to JSON-serializable dictionary, including nested Value Objects."""
         return {
             "id": str(self.id),
             "raw_text": self.raw_text,
@@ -494,10 +261,10 @@ class HVACDescription:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "HVACDescription":
         """
-        Deserialize entity from dictionary.
+        Deserialize entity from dictionary (e.g., from to_dict() or Redis).
 
-        Creates HVACDescription instance from dictionary representation
-        (typically from to_dict() output or storage/API).
+        Reconstructs nested Value Objects, converts string UUIDs, ISO datetimes,
+        state strings, and Decimal prices back to their proper types.
 
         Args:
             data: Dictionary with entity data
@@ -506,39 +273,7 @@ class HVACDescription:
             Reconstructed HVACDescription instance
 
         Raises:
-            InvalidHVACDescriptionError: If required fields are missing or invalid
             KeyError: If 'raw_text' is missing
-
-        Examples:
-            >>> data = {
-            ...     "id": "550e8400-e29b-41d4-a716-446655440000",
-            ...     "raw_text": "Zawór DN50",
-            ...     "state": "created",
-            ...     "created_at": "2024-01-15T10:30:00",
-            ...     "updated_at": "2024-01-15T10:30:00",
-            ...     "source_row_number": 5,
-            ...     "file_id": None,
-            ...     "extracted_params": None,
-            ...     "match_score": None,
-            ...     "matched_price": None,
-            ...     "matched_description": None
-            ... }
-            >>> desc = HVACDescription.from_dict(data)
-            >>> desc.raw_text
-            'Zawór DN50'
-            >>> desc.state
-            <HVACDescriptionState.CREATED: 'created'>
-
-        Business Logic:
-            - Reconstructs nested Value Objects (ExtractedParameters, MatchScore)
-            - Converts string UUIDs back to UUID objects
-            - Converts ISO datetime strings back to datetime objects
-            - Converts state string back to HVACDescriptionState enum
-            - Converts price string back to Decimal
-
-        Architecture Note:
-            Enables roundtrip serialization/deserialization for persistence.
-            Used by repository implementations to reconstruct entities from storage.
         """
         # Required field
         raw_text = data["raw_text"]
@@ -599,13 +334,7 @@ class HVACDescription:
         self, price: Decimal, matched_description: str, match_score: MatchScore
     ) -> None:
         """
-        Merge price information from matching result.
-
-        Updates entity with:
-        - Matched price from reference catalog
-        - Match score details
-        - State transition to PRICED
-        - Updated timestamp
+        Merge price from catalog result and transition state to PRICED.
 
         Args:
             price: Price from matched reference description
@@ -614,18 +343,6 @@ class HVACDescription:
 
         Raises:
             InvalidHVACDescriptionError: If price is negative or match_score is invalid
-
-        Examples:
-            >>> desc = HVACDescription(raw_text="Zawór DN50")
-            >>> desc.merge_with_price(
-            ...     price=Decimal("250.00"),
-            ...     matched_description="Zawór kulowy DN50 PN16",
-            ...     match_score=MatchScore(...)
-            ... )
-            >>> desc.state
-            <HVACDescriptionState.PRICED: 'priced'>
-            >>> desc.matched_price
-            Decimal('250.00')
         """
         if price < 0:
             raise InvalidHVACDescriptionError(f"Price cannot be negative, got {price}")
@@ -643,23 +360,12 @@ class HVACDescription:
 
     def get_match_report(self) -> str | None:
         """
-        Generate human-readable matching report.
-
-        Creates formatted string with matching details for Excel export.
-        Returns None if description hasn't been matched yet.
+        Generate human-readable matching report for Excel export.
 
         Format: "Matched: <description> | Score: <score>% | DN: <dn> | PN: <pn>"
 
         Returns:
-            Formatted matching report string or None if not matched
-
-        Examples:
-            >>> desc = HVACDescription(raw_text="Zawór DN50")
-            >>> desc.get_match_report()
-            None
-            >>> desc.merge_with_price(Decimal("250"), "Zawór DN50 PN16", score)
-            >>> desc.get_match_report()
-            'Matched: Zawór DN50 PN16 | Score: 95.2% | Price: 250.00 PLN'
+            Formatted report string or None if not yet matched
         """
         if not self.match_score or self.state not in (
             HVACDescriptionState.MATCHED,
@@ -685,12 +391,7 @@ class HVACDescription:
         return " | ".join(report_parts)
 
     def __repr__(self) -> str:
-        """
-        Developer-friendly representation.
-
-        Returns:
-            String representation for debugging
-        """
+        """Developer-friendly representation for debugging."""
         text_preview = self.raw_text[:50] + ("..." if len(self.raw_text) > 50 else "")
         return (
             f"HVACDescription(id={self.id}, "
@@ -699,10 +400,5 @@ class HVACDescription:
         )
 
     def __str__(self) -> str:
-        """
-        User-friendly representation.
-
-        Returns:
-            Readable string representation
-        """
+        """User-friendly representation."""
         return f"{self.raw_text} [{self.state.value}]"

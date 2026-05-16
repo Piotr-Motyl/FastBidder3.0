@@ -1,10 +1,6 @@
 """
-DiameterNominal (DN) Value Object.
-
-DN represents the nominal diameter of pipes, valves, and fittings in HVAC systems.
-It is expressed in millimeters and follows ISO/EN standards.
-
-This is an immutable Value Object following DDD principles.
+DiameterNominal (DN) — immutable value object for nominal pipe diameter (mm, range 15-1000).
+Supports parsing from DN notation, diameter symbol Ø, and inch sizes.
 """
 
 import re
@@ -82,41 +78,12 @@ MAX_DN_VALUE: Final[int] = 1000
 
 @dataclass(frozen=True)
 class DiameterNominal:
-    """
-    Immutable Value Object representing DN (Diameter Nominal) in HVAC systems.
-
-    DN is the nominal diameter of pipes, valves, and fittings expressed in millimeters.
-    Valid range: 15-1000mm (standard HVAC sizes).
-
-    This class is immutable (frozen) - once created, value cannot be changed.
-    Equality is based on value, not object identity.
-
-    Attributes:
-        value: Diameter nominal value in millimeters (15-1000)
-
-    Examples:
-        >>> dn = DiameterNominal(50)
-        >>> dn.value
-        50
-        >>> dn.to_string()
-        'DN50'
-        >>> dn2 = DiameterNominal.from_string("DN50")
-        >>> dn == dn2
-        True
-    """
+    """DN value in mm (15-1000). Immutable; equality by value."""
 
     value: int
 
     def __post_init__(self) -> None:
-        """
-        Validate DN value after initialization.
-
-        Called automatically by dataclass after __init__.
-        Since the object is frozen, this is the only place where validation can happen.
-
-        Raises:
-            InvalidDNValueError: If value is outside valid range (15-1000)
-        """
+        """Validate DN is an int in [15, 1000]. Raises InvalidDNValueError otherwise."""
         if not isinstance(self.value, int):
             raise InvalidDNValueError(
                 f"DN value must be integer, got {type(self.value).__name__}"
@@ -130,30 +97,8 @@ class DiameterNominal:
     @classmethod
     def from_string(cls, text: str) -> "DiameterNominal":
         """
-        Parse DN value from string with various formats.
-
-        Supported formats:
-        - "DN50", "dn50", "Dn50" - standard notation
-        - "DN 50", "DN-50", "DN=50" - with separators
-        - "Ø50", "ø50" - diameter symbol
-        - "1/2\"", "2\"" - inch notation
-
-        Args:
-            text: String containing DN value in any supported format
-
-        Returns:
-            DiameterNominal instance with parsed value
-
-        Raises:
-            InvalidDNValueError: If text cannot be parsed or value is invalid
-
-        Examples:
-            >>> DiameterNominal.from_string("DN50")
-            DiameterNominal(value=50)
-            >>> DiameterNominal.from_string("2\"")
-            DiameterNominal(value=50)
-            >>> DiameterNominal.from_string("ø100")
-            DiameterNominal(value=100)
+        Parse DN from string. Supported formats: DN50, DN 50, DN-50, DN=50, Ø50, 2", 1/2", 1.5".
+        Raises InvalidDNValueError if text cannot be parsed.
         """
         # Validate input type
         if not isinstance(text, str):
@@ -250,74 +195,18 @@ class DiameterNominal:
         )
 
     def to_string(self) -> str:
-        """
-        Convert DN to standard string format.
-
-        Returns DN in standard HVAC notation: "DN{value}" (uppercase, no spaces).
-
-        Returns:
-            String representation in format "DN50", "DN100", etc.
-
-        Examples:
-            >>> DiameterNominal(50).to_string()
-            'DN50'
-            >>> DiameterNominal(150).to_string()
-            'DN150'
-        """
+        """Return standard HVAC notation, e.g. "DN50"."""
         return f"DN{self.value}"
 
     def is_standard_size(self) -> bool:
-        """
-        Check if DN value is a standard HVAC size.
-
-        Standard sizes are defined in STANDARD_DN_SIZES constant according to
-        ISO/EN specifications.
-
-        Returns:
-            True if value is in standard sizes list, False otherwise
-
-        Examples:
-            >>> DiameterNominal(50).is_standard_size()
-            True
-            >>> DiameterNominal(55).is_standard_size()
-            False
-        """
+        """True if value is in STANDARD_DN_SIZES (ISO/EN)."""
         return self.value in STANDARD_DN_SIZES
 
     def is_compatible_with(self, pn: "PressureNominal") -> bool:
         """
-        Check if this DN is compatible with given PN (Pressure Nominal).
-
-        According to HVAC standards, certain DN/PN combinations are not physically
-        possible or safe. For example:
-        - Small diameters (DN15-DN25) cannot handle very high pressures (PN100)
-        - Very large diameters (DN800-DN1000) typically use lower pressure classes
-
-        Business Rules:
-        - DN15-DN25: max PN40
-        - DN32-DN50: max PN63
-        - DN65-DN300: max PN100
-        - DN350-DN600: max PN63
-        - DN700-DN1000: max PN40
-
-        Args:
-            pn: PressureNominal instance to check compatibility with
-
-        Returns:
-            True if DN/PN combination is valid, False otherwise
-
-        Raises:
-            IncompatibleDNPNError: If combination violates safety standards
-
-        Examples:
-            >>> dn = DiameterNominal(50)
-            >>> pn = PressureNominal(16)
-            >>> dn.is_compatible_with(pn)
-            True
-            >>> dn15 = DiameterNominal(15)
-            >>> pn100 = PressureNominal(100)
-            >>> dn15.is_compatible_with(pn100)
-            False
+        Check DN/PN compatibility per HVAC pressure limits:
+            DN15-25 → max PN40 | DN32-50 → max PN63 | DN65-300 → max PN100
+            DN350-600 → max PN63 | DN700-1000 → max PN40
         """
         # Import here to avoid circular dependency at runtime
         from src.domain.hvac.value_objects.pressure_nominal import PressureNominal
@@ -354,19 +243,7 @@ class DiameterNominal:
         return False
 
     def __str__(self) -> str:
-        """
-        String representation for display purposes.
-
-        Returns:
-            Standard DN notation string
-        """
         return self.to_string()
 
     def __repr__(self) -> str:
-        """
-        Developer-friendly representation for debugging.
-
-        Returns:
-            String showing class name and value
-        """
         return f"DiameterNominal(value={self.value})"

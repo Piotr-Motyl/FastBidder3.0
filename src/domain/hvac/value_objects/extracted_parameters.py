@@ -1,12 +1,6 @@
 """
-ExtractedParameters Value Object
-
-Represents the result of parameter extraction from HVAC description text.
-This value object holds raw extracted values (not Value Objects) along with
-confidence scores for each parameter.
-
-Part of: Task 2.1.3 - ParameterExtractor domain service
-Phase: 2.1 - Domain Layer Details
+ExtractedParameters — result of parameter extraction from HVAC description text.
+Raw values (int/str) with confidence scores per parameter. Immutable frozen dataclass.
 """
 
 from dataclasses import dataclass, field
@@ -16,32 +10,9 @@ from typing import Any, Optional, Dict
 @dataclass(frozen=True)
 class ExtractedParameters:
     """
-    Value Object representing extracted HVAC parameters from text description.
+    Extracted HVAC parameters with per-parameter confidence scores (0.0-1.0).
 
-    Contains raw values (int/str) rather than Value Objects for separation of concerns.
-    Each parameter has an associated confidence score (0.0-1.0) indicating extraction quality.
-
-    Confidence Score Interpretation:
-    - 1.0: Exact match with regex or dictionary
-    - 0.5-0.9: Partial match or synonym match
-    - 0.0: Parameter not found
-
-    Business Rules:
-    - All fields are Optional (None if not found)
-    - Confidence scores stored separately for clarity
-    - Raw values allow flexible validation in consuming code
-    - Immutable after creation (frozen dataclass)
-
-    Usage Example:
-        params = ExtractedParameters(
-            dn=50,
-            pn=16,
-            valve_type="kulowy",
-            confidence_scores={"dn": 1.0, "pn": 1.0, "valve_type": 0.9}
-        )
-
-        if params.has_parameters():
-            print(f"Found DN{params.dn} PN{params.pn}")
+    All fields are Optional (None = not found). Confidence: 1.0 = exact match, 0.5-0.9 = synonym match.
     """
 
     # Core HVAC Parameters (Happy Path - DN/PN most important)
@@ -65,11 +36,7 @@ class ExtractedParameters:
     confidence_scores: Dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """
-        Validate confidence scores after initialization.
-
-        Business Rule: All confidence scores must be between 0.0 and 1.0
-        """
+        """Validate all confidence scores are in [0.0, 1.0]."""
         for param_name, score in self.confidence_scores.items():
             if not 0.0 <= score <= 1.0:
                 raise ValueError(
@@ -78,15 +45,7 @@ class ExtractedParameters:
                 )
 
     def has_parameters(self) -> bool:
-        """
-        Check if any parameters were successfully extracted.
-
-        Returns:
-            True if at least one parameter (excluding manufacturer) was found
-
-        Business Logic:
-            Manufacturer alone is not sufficient - we need at least one technical parameter
-        """
+        """True if at least one technical parameter (excluding manufacturer) was found."""
         return any(
             [
                 self.dn is not None,
@@ -99,70 +58,22 @@ class ExtractedParameters:
         )
 
     def has_critical_parameters(self) -> bool:
-        """
-        Check if critical parameters (DN or PN) were found.
-
-        Returns:
-            True if either DN or PN was extracted
-
-        Business Logic:
-            DN and PN are the most important parameters for HVAC matching.
-            At least one of them is usually required for meaningful matching.
-        """
+        """True if DN or PN was extracted (the two most important matching parameters)."""
         return self.dn is not None or self.pn is not None
 
     def get_confidence(self, parameter_name: str) -> float:
-        """
-        Get confidence score for a specific parameter.
-
-        Args:
-            parameter_name: Name of the parameter (e.g., "dn", "pn", "valve_type")
-
-        Returns:
-            Confidence score (0.0-1.0), or 0.0 if parameter not in scores
-
-        Note:
-            Returns 0.0 for missing parameters rather than raising KeyError
-            for easier usage in scoring algorithms
-        """
+        """Return confidence score for a parameter, or 0.0 if not present."""
         return self.confidence_scores.get(parameter_name, 0.0)
 
     def get_average_confidence(self) -> float:
-        """
-        Calculate average confidence across all extracted parameters.
-
-        Returns:
-            Average confidence score, or 0.0 if no parameters extracted
-
-        Business Logic:
-            Only considers parameters that were actually found (have scores).
-            Useful for overall extraction quality assessment.
-        """
+        """Average confidence across all extracted parameters, or 0.0 if none."""
         if not self.confidence_scores:
             return 0.0
 
         return sum(self.confidence_scores.values()) / len(self.confidence_scores)
 
     def is_empty(self) -> bool:
-        """
-        Check if all parameters are None (no extraction results).
-
-        Returns:
-            True if all parameters are None, False otherwise
-
-        Business Logic:
-            Empty extraction means extraction failed completely or text had no HVAC content.
-            This is different from has_parameters() which checks if ANY parameter exists.
-
-        Examples:
-            >>> params = ExtractedParameters()
-            >>> params.is_empty()
-            True
-
-            >>> params = ExtractedParameters(dn=50)
-            >>> params.is_empty()
-            False
-        """
+        """True if all parameters (including manufacturer) are None. Complement of has_parameters() + manufacturer."""
         return all(
             [
                 self.dn is None,
@@ -176,15 +87,7 @@ class ExtractedParameters:
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        """
-        Convert to dictionary for serialization/logging.
-
-        Returns:
-            Dictionary with all parameters and confidence scores
-
-        Usage:
-            Useful for JSON serialization, logging, or debugging
-        """
+        """Convert to dictionary for serialization/logging. Includes derived fields (has_parameters, etc.)."""
         return {
             "dn": self.dn,
             "pn": self.pn,
@@ -201,33 +104,7 @@ class ExtractedParameters:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ExtractedParameters":
-        """
-        Create ExtractedParameters from dictionary (deserialization).
-
-        Args:
-            data: Dictionary containing parameter values and confidence scores
-
-        Returns:
-            ExtractedParameters instance
-
-        Usage:
-            For deserializing from JSON, database, or other storage
-
-        Examples:
-            >>> data = {
-            ...     "dn": 50,
-            ...     "pn": 16,
-            ...     "valve_type": "kulowy",
-            ...     "confidence_scores": {"dn": 1.0, "pn": 1.0}
-            ... }
-            >>> params = ExtractedParameters.from_dict(data)
-            >>> params.dn
-            50
-
-        Note:
-            Ignores computed fields (has_parameters, has_critical_parameters, average_confidence)
-            from to_dict() output as these are derived properties.
-        """
+        """Deserialize from dict. Ignores computed fields from to_dict() (has_parameters, etc.)."""
         # Extract only fields that are part of the dataclass
         # Ignore computed fields from to_dict() output
         return cls(

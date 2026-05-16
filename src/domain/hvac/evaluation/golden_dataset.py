@@ -1,25 +1,11 @@
 """
-Golden Dataset for Matching Evaluation (Phase 4).
+Golden Dataset for Matching Evaluation.
 
-Provides data structures and tools for managing evaluation datasets:
+Data structures and tools for managing evaluation datasets:
 - GoldenPair: Single evaluation pair (working_text → correct_reference)
-- GoldenDataset: Collection of golden pairs with metadata
-- Loader: Load dataset from JSON files
-- Validation: Verify reference IDs exist in ChromaDB
-
-Usage:
-    >>> # Load golden dataset from JSON
-    >>> dataset = load_golden_dataset("data/golden_dataset.json")
-    >>> print(f"Loaded {len(dataset.pairs)} pairs, version {dataset.version}")
-
-    >>> # Validate against ChromaDB
-    >>> from src.infrastructure.ai.vector_store.chroma_client import ChromaClient
-    >>> chroma = ChromaClient()
-    >>> validation_result = validate_golden_dataset(dataset, chroma)
-    >>> print(f"Valid: {validation_result.is_valid}")
-
-CLI Usage:
-    python -m src.infrastructure.evaluation.golden_dataset validate path/to/dataset.json
+- GoldenDataset: Collection of golden pairs with metadata and train/test split
+- load_golden_dataset(): Load dataset from JSON file
+- validate_golden_dataset(): Verify reference IDs exist in ChromaDB
 """
 
 import json
@@ -45,36 +31,16 @@ class GoldenPair:
     Single evaluation pair in golden dataset.
 
     Represents a known correct match between working text and reference.
-    Used for evaluating matching engine quality.
 
     Attributes:
         working_text: Input text from working file (to be matched)
         correct_reference_text: Expected reference text that should match
         correct_reference_id: Expected reference ID in ChromaDB (format: {file_id}_{row_number})
-        difficulty: Difficulty level for analysis ("easy", "medium", "hard")
-            - easy: Exact or near-exact match (e.g., identical DN, PN, material)
+        difficulty: Difficulty level ("easy", "medium", "hard")
+            - easy: Exact or near-exact match
             - medium: Requires semantic understanding (synonyms, variations)
-            - hard: Complex cases (abbreviations, missing params, ambiguous)
+            - hard: Abbreviations, missing params, ambiguous cases
         notes: Optional notes explaining why this is the correct match
-
-    Examples:
-        >>> # Easy case: exact match
-        >>> pair = GoldenPair(
-        ...     working_text="Zawór kulowy DN50 PN16 mosiężny",
-        ...     correct_reference_text="Zawór kulowy DN50 PN16 mosiądz",
-        ...     correct_reference_id="a3bb189e-8bf9-3888-9912-ace4e6543002_42",
-        ...     difficulty="easy",
-        ...     notes="Exact parameter match, only material synonym"
-        ... )
-
-        >>> # Hard case: abbreviations and missing params
-        >>> pair = GoldenPair(
-        ...     working_text="ZK DN50 PN16",
-        ...     correct_reference_text="Zawór kulowy DN50 PN16 mosiężny kompaktowy",
-        ...     correct_reference_id="a3bb189e-8bf9-3888-9912-ace4e6543002_100",
-        ...     difficulty="hard",
-        ...     notes="Abbreviated valve type, missing material in working text"
-        ... )
     """
 
     working_text: str
@@ -100,27 +66,13 @@ class GoldenDataset:
     """
     Collection of golden pairs for evaluation.
 
-    Represents a versioned evaluation dataset with metadata.
-    Used for systematic testing of matching engine quality.
+    Versioned evaluation dataset used for systematic testing of matching engine quality.
 
     Attributes:
         version: Dataset version (e.g., "1.0", "2024-01-15")
         created_at: ISO timestamp when dataset was created
         pairs: List of GoldenPair objects
         description: Optional dataset description
-
-    Examples:
-        >>> dataset = GoldenDataset(
-        ...     version="1.0",
-        ...     created_at="2024-01-15T10:30:00",
-        ...     pairs=[
-        ...         GoldenPair(...),
-        ...         GoldenPair(...),
-        ...     ],
-        ...     description="Initial evaluation dataset for HVAC matching"
-        ... )
-        >>> print(f"Dataset v{dataset.version}: {len(dataset.pairs)} pairs")
-        Dataset v1.0: 50 pairs
     """
 
     version: str
@@ -136,29 +88,11 @@ class GoldenDataset:
             raise ValueError("created_at cannot be empty")
 
     def to_dict(self) -> dict:
-        """
-        Convert to dictionary for JSON serialization.
-
-        Returns:
-            Dict with dataset data, ready for JSON serialization
-
-        Examples:
-            >>> dataset_dict = dataset.to_dict()
-            >>> with open("dataset.json", "w") as f:
-            ...     json.dump(dataset_dict, f, indent=2)
-        """
+        """Convert to dictionary for JSON serialization."""
         return asdict(self)
 
     def save(self, path: Path | str) -> None:
-        """
-        Save dataset to JSON file.
-
-        Args:
-            path: File path to save to (will create parent directories)
-
-        Examples:
-            >>> dataset.save("data/golden_dataset.json")
-        """
+        """Save dataset to JSON file. Creates parent directories if needed."""
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -174,12 +108,7 @@ class GoldenDataset:
 
     @property
     def pairs_by_difficulty(self) -> dict[str, int]:
-        """
-        Count pairs by difficulty level.
-
-        Returns:
-            Dict with counts: {"easy": 10, "medium": 25, "hard": 15}
-        """
+        """Count pairs by difficulty level, e.g. {"easy": 10, "medium": 25, "hard": 15}."""
         counts = {"easy": 0, "medium": 0, "hard": 0}
         for pair in self.pairs:
             counts[pair.difficulty] += 1
@@ -194,50 +123,16 @@ class GoldenDataset:
         """
         Split dataset into train and test sets.
 
-        This method enables splitting the golden dataset for threshold tuning and evaluation,
-        allowing you to tune thresholds on training data and validate on held-out test data.
-
         Args:
-            test_ratio: Fraction of data for test set (0.0-1.0). Default is 0.2 (80% train, 20% test).
-            random_seed: Random seed for reproducibility (None = random). Use a fixed seed for
-                        reproducible splits across runs.
-            stratify_by_difficulty: Maintain difficulty distribution in splits. If True, each split
-                                   will have the same proportion of easy/medium/hard pairs as the
-                                   original dataset. Default is True.
+            test_ratio: Fraction of data for test set (0.0-1.0). Default 0.2 (80/20 split).
+            random_seed: Seed for reproducibility (None = random).
+            stratify_by_difficulty: If True, maintain easy/medium/hard distribution in both splits.
 
         Returns:
-            Tuple of (train_dataset, test_dataset) where each is a GoldenDataset instance.
+            Tuple of (train_dataset, test_dataset).
 
         Raises:
             ValueError: If test_ratio is not between 0.0 and 1.0 (exclusive).
-
-        Example:
-            >>> # Split dataset with reproducible random seed
-            >>> dataset = load_golden_dataset("data/golden.json")
-            >>> train, test = dataset.split(test_ratio=0.2, random_seed=42)
-            >>> print(f"Train: {train.total_pairs}, Test: {test.total_pairs}")
-            Train: 80, Test: 20
-
-            >>> # Verify stratification maintained difficulty distribution
-            >>> print(train.pairs_by_difficulty)
-            {"easy": 40, "medium": 25, "hard": 15}
-            >>> print(test.pairs_by_difficulty)
-            {"easy": 10, "medium": 6, "hard": 4}
-
-        Usage in threshold tuning:
-            >>> dataset = load_golden_dataset("data/golden.json")
-            >>> train, test = dataset.split(test_ratio=0.3, random_seed=42)
-            >>>
-            >>> # Tune threshold on training set
-            >>> report = await threshold_tuner.tune(golden_dataset=train, thresholds=[60, 70, 80])
-            >>> optimal_threshold = report.recommended_threshold
-            >>>
-            >>> # Validate on test set
-            >>> test_report = await evaluation_runner.evaluate(
-            ...     golden_dataset=test,
-            ...     threshold=optimal_threshold
-            ... )
-            >>> print(f"Test Precision@1: {test_report.precision_at_1:.2%}")
         """
         # Validate test_ratio
         if not (0.0 < test_ratio < 1.0):
@@ -324,12 +219,7 @@ class ValidationResult:
     errors: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
-        """
-        Generate validation summary.
-
-        Returns:
-            Human-readable summary string
-        """
+        """Generate human-readable validation summary."""
         if self.is_valid:
             return f"✓ All {self.total_pairs} pairs valid"
         else:
@@ -359,28 +249,6 @@ def load_golden_dataset(path: Path | str) -> GoldenDataset:
         FileNotFoundError: If file doesn't exist
         ValueError: If JSON is invalid or missing required fields
         json.JSONDecodeError: If file is not valid JSON
-
-    JSON Format:
-        {
-            "version": "1.0",
-            "created_at": "2024-01-15T10:30:00",
-            "description": "Initial evaluation dataset",
-            "pairs": [
-                {
-                    "working_text": "Zawór kulowy DN50 PN16",
-                    "correct_reference_text": "Zawór kulowy DN50 PN16 mosiądz",
-                    "correct_reference_id": "file-uuid_42",
-                    "difficulty": "easy",
-                    "notes": "Exact match"
-                },
-                ...
-            ]
-        }
-
-    Examples:
-        >>> dataset = load_golden_dataset("data/golden_dataset.json")
-        >>> print(f"Loaded {dataset.total_pairs} pairs")
-        Loaded 50 pairs
     """
     path = Path(path)
 

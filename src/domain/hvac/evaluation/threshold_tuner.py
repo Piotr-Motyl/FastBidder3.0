@@ -1,22 +1,6 @@
 """
-Threshold Tuner for Matching Quality Optimization (Phase 4).
-
-Tunes matching threshold by testing multiple values on golden dataset.
-Finds optimal threshold balancing precision and recall.
-
-Usage:
-    >>> from src.domain.hvac.evaluation.threshold_tuner import ThresholdTuner
-    >>> from src.domain.hvac.evaluation.evaluation_runner import EvaluationRunner
-    >>> from src.domain.hvac.evaluation.golden_dataset import load_golden_dataset
-    >>>
-    >>> dataset = load_golden_dataset("data/golden_dataset.json")
-    >>> tuner = ThresholdTuner(evaluation_runner)
-    >>> report = await tuner.tune(dataset, thresholds=[60, 65, 70, 75, 80, 85, 90, 95])
-    >>> print(f"Recommended threshold: {report.recommended_threshold}")
-    >>> print(report.to_markdown())
-
-CLI Usage:
-    python -m src.infrastructure.evaluation.threshold_tuner --dataset path/to/golden.json
+ThresholdTuner — tests multiple threshold values on golden dataset to find the optimal
+precision/recall balance. Recommendation strategy: max precision where recall >= min_recall.
 """
 
 import json
@@ -41,39 +25,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ThresholdResult:
-    """
-    Evaluation results for a single threshold value.
-
-    Attributes:
-        threshold: Threshold value tested
-        precision: Precision (TP / (TP + FP)) - % of matches that are correct
-        recall: Recall (TP / (TP + FN)) - % of golden pairs that were matched
-        f1_score: F1 Score (harmonic mean of precision and recall)
-        true_positives: Number of correct matches
-        false_positives: Number of incorrect matches
-        false_negatives: Number of pairs that should match but didn't
-
-    Metrics Explanation:
-        - Precision: Of all matches made, what % are correct?
-        - Recall: Of all correct matches possible, what % did we find?
-        - F1: Balanced metric combining precision and recall
-        - TP: Correct match found
-        - FP: Wrong match made
-        - FN: Should match but no match found or wrong match
-
-    Examples:
-        >>> result = ThresholdResult(
-        ...     threshold=75.0,
-        ...     precision=0.85,
-        ...     recall=0.90,
-        ...     f1_score=0.874,
-        ...     true_positives=45,
-        ...     false_positives=8,
-        ...     false_negatives=5,
-        ... )
-        >>> print(f"At threshold {result.threshold}: P={result.precision:.2%}, R={result.recall:.2%}")
-        At threshold 75.0: P=85.00%, R=90.00%
-    """
+    """Evaluation results for a single threshold value (precision, recall, F1, TP/FP/FN)."""
 
     threshold: float
     precision: float
@@ -86,23 +38,7 @@ class ThresholdResult:
 
 @dataclass
 class ThresholdTuningReport:
-    """
-    Complete threshold tuning report.
-
-    Attributes:
-        results: List of results for each threshold tested
-        recommended_threshold: Recommended threshold (max precision where recall >= min_recall)
-        recommendation_reason: Explanation of why this threshold was recommended
-        best_precision_threshold: Threshold with highest precision
-        best_recall_threshold: Threshold with highest recall
-        best_f1_threshold: Threshold with highest F1 score
-        min_recall_constraint: Minimum recall required for recommendation
-
-    Examples:
-        >>> report = ThresholdTuningReport(...)
-        >>> print(f"Recommended: {report.recommended_threshold}")
-        >>> print(report.to_markdown())
-    """
+    """Complete tuning report: per-threshold results, recommendation, and markdown/JSON export."""
 
     results: list[ThresholdResult] = field(default_factory=list)
     recommended_threshold: float | None = None
@@ -113,29 +49,11 @@ class ThresholdTuningReport:
     min_recall_constraint: float = 0.7
 
     def to_dict(self) -> dict:
-        """
-        Convert to dictionary for JSON serialization.
-
-        Returns:
-            Dict with report data
-
-        Examples:
-            >>> report_dict = report.to_dict()
-            >>> with open("tuning_report.json", "w") as f:
-            ...     json.dump(report_dict, f, indent=2)
-        """
+        """Convert to dictionary for JSON serialization."""
         return asdict(self)
 
     def save_json(self, path: Path | str) -> None:
-        """
-        Save report to JSON file.
-
-        Args:
-            path: File path to save to
-
-        Examples:
-            >>> report.save_json("threshold_tuning_report.json")
-        """
+        """Save report to JSON file. Creates parent directories if needed."""
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -145,17 +63,7 @@ class ThresholdTuningReport:
         logger.info(f"Saved threshold tuning report to {path}")
 
     def to_markdown(self) -> str:
-        """
-        Generate markdown report.
-
-        Returns:
-            Markdown-formatted tuning report
-
-        Examples:
-            >>> print(report.to_markdown())
-            # Threshold Tuning Report
-            ...
-        """
+        """Generate markdown threshold tuning report with recommendation and results table."""
         lines = []
         lines.append("# Threshold Tuning Report")
         lines.append("")
@@ -237,36 +145,9 @@ class ThresholdTuningReport:
 
 
 class ThresholdTuner:
-    """
-    Service for tuning matching threshold on golden dataset.
-
-    Tests multiple threshold values and finds optimal balance between
-    precision and recall.
-
-    Strategy:
-        - Test each threshold on golden dataset using EvaluationRunner
-        - Calculate precision, recall, F1 for each threshold
-        - Recommend threshold with max precision where recall >= min_recall
-
-    Examples:
-        >>> tuner = ThresholdTuner(evaluation_runner)
-        >>> report = await tuner.tune(
-        ...     golden_dataset=dataset,
-        ...     thresholds=[60, 65, 70, 75, 80, 85, 90, 95],
-        ...     min_recall=0.7,
-        ... )
-        >>> print(f"Recommended: {report.recommended_threshold}")
-        >>> with open("report.md", "w") as f:
-        ...     f.write(report.to_markdown())
-    """
+    """Tests multiple threshold values on golden dataset, selects max precision where recall >= min_recall."""
 
     def __init__(self, evaluation_runner: EvaluationRunner):
-        """
-        Initialize threshold tuner.
-
-        Args:
-            evaluation_runner: EvaluationRunner for testing thresholds
-        """
         self.evaluation_runner = evaluation_runner
 
     async def tune(
@@ -280,17 +161,9 @@ class ThresholdTuner:
         Tune threshold on golden dataset.
 
         Args:
-            golden_dataset: Dataset to evaluate on
-            thresholds: List of threshold values to test (default: [60,65,70,75,80,85,90,95])
+            thresholds: Values to test (default: [60, 65, 70, 75, 80, 85, 90, 95])
             min_recall: Minimum recall required for recommendation (default: 0.7)
-            progress_callback: Optional callback(current, total, threshold) for progress
-
-        Returns:
-            ThresholdTuningReport with results and recommendation
-
-        Examples:
-            >>> report = await tuner.tune(dataset)
-            >>> print(f"Tested {len(report.results)} thresholds")
+            progress_callback: Optional callback(current, total, threshold) for progress reporting
         """
         if thresholds is None:
             thresholds = [60.0, 65.0, 70.0, 75.0, 80.0, 85.0, 90.0, 95.0]
@@ -363,24 +236,7 @@ class ThresholdTuner:
         eval_report: EvaluationReport,
         total_pairs: int,
     ) -> ThresholdResult:
-        """
-        Calculate precision, recall, F1 from evaluation report.
-
-        Args:
-            threshold: Threshold value
-            eval_report: Evaluation report from EvaluationRunner
-            total_pairs: Total golden pairs
-
-        Returns:
-            ThresholdResult with calculated metrics
-
-        Metrics calculation:
-            - Precision@1 from eval_report is our precision (% of matches that are correct)
-            - Recall@1 from eval_report is our recall (% of pairs that were matched correctly)
-            - TP = correct matches = recall * total_pairs
-            - FP = wrong matches (from failed_pairs with reason="wrong_match")
-            - FN = pairs that should match but didn't = (1 - recall) * total_pairs
-        """
+        """Calculate precision, recall, F1 from EvaluationReport at a single threshold."""
         # Precision@1: % of matches that are correct
         precision = eval_report.precision_at_1
 
@@ -421,18 +277,7 @@ class ThresholdTuner:
         results: list[ThresholdResult],
         min_recall: float,
     ) -> tuple[float | None, str]:
-        """
-        Find recommended threshold.
-
-        Strategy: Select threshold with maximum precision where recall >= min_recall
-
-        Args:
-            results: List of threshold results
-            min_recall: Minimum recall constraint
-
-        Returns:
-            Tuple of (recommended_threshold, reason)
-        """
+        """Return (threshold, reason) with max precision where recall >= min_recall, or (None, reason) if none qualify."""
         # Filter results with recall >= min_recall
         valid_results = [r for r in results if r.recall >= min_recall]
 

@@ -1,26 +1,6 @@
 """
-Matching Configuration
-
-Configuration constants for SimpleMatchingEngine parameter weighting and thresholds.
-Defines the business rules for hybrid matching (parameter-based + semantic).
-
-Part of: Task 2.1.4 - SimpleMatchingEngine domain service
-Phase: 2.1 - Domain Layer Details
-
-Business Context:
-    The hybrid matching algorithm combines parameter-based matching (regex/dictionary)
-    with semantic similarity (AI embeddings). The weights reflect business priorities:
-    - DN (30%) - Most critical parameter for HVAC equipment
-    - Semantic (30%) - Captures intent and synonyms
-    - Material (15%) - Important for compatibility
-    - Valve Type (15%) - Functional requirement
-    - PN (10%) - Less critical than DN but still important
-
-Design Principles:
-    - Configuration as code (not database)
-    - Type-safe constants
-    - Business rule documentation
-    - Easy to modify for A/B testing
+Matching configuration constants, ParameterWeights, and MatchingConfig dataclasses.
+Weights, thresholds, and fast-fail rules for the hybrid matching algorithm.
 """
 
 from dataclasses import dataclass
@@ -112,16 +92,7 @@ SEMANTIC_BATCH_SIZE: Final[int] = 32
 
 @dataclass(frozen=True)
 class ParameterWeights:
-    """
-    Structured representation of parameter weights for type safety.
-
-    Provides named access to weights and validation that they sum correctly.
-    Immutable to prevent accidental modification during matching.
-
-    Usage:
-        weights = ParameterWeights.default()
-        score = weights.dn * dn_match + weights.pn * pn_match + ...
-    """
+    """Named parameter weights with validation that they sum to 1.0. Immutable."""
 
     dn: float = WEIGHT_DN
     pn: float = WEIGHT_PN
@@ -171,24 +142,10 @@ class ParameterWeights:
 @dataclass(frozen=True)
 class MatchingConfig:
     """
-    Complete configuration for SimpleMatchingEngine.
+    Complete configuration for SimpleMatchingEngine and HybridMatchingEngine.
 
-    Encapsulates all configuration values in a single immutable object.
-    Can be passed to matching engine constructor for dependency injection.
-
-    Attributes:
-        parameter_weights: Weight distribution for individual parameters
-        hybrid_param_weight: Weight for parameter score in final calculation (0.4)
-        hybrid_semantic_weight: Weight for semantic score in final calculation (0.6)
-        default_threshold: Minimum score for accepting a match (75.0)
-        min_score_gap_for_high_confidence: Minimum score gap to second-best for high confidence (10.0)
-        enable_fast_fail: Whether to use fast-fail optimization (True)
-        semantic_placeholder: Placeholder value for semantic score in Phase 2/3 (0.5)
-        retrieval_top_k: Number of top-K candidates to retrieve in Stage 1 (Phase 4, default: 20)
-
-    Usage:
-        config = MatchingConfig.default()
-        engine = SimpleMatchingEngine(config)
+    Defaults: param_weight=0.4, semantic_weight=0.6, threshold=75.0, fast_fail=True,
+              semantic_placeholder=0.5, retrieval_top_k=20.
     """
 
     parameter_weights: ParameterWeights = ParameterWeights.default()
@@ -226,72 +183,12 @@ class MatchingConfig:
 
     @classmethod
     def default(cls) -> "MatchingConfig":
-        """
-        Get default configuration from module constants.
-
-        Returns default configuration suitable for production use.
-
-        Returns:
-            MatchingConfig with all default values
-
-        Examples:
-            >>> config = MatchingConfig.default()
-            >>> config.hybrid_param_weight
-            0.4
-            >>> config.default_threshold
-            75.0
-        """
+        """Return production-ready config from module constants."""
         return cls()
 
     @classmethod
     def for_testing(cls, **overrides: Any) -> "MatchingConfig":
-        """
-        Create configuration with custom overrides for testing.
-
-        Allows partial override of default values while keeping others at defaults.
-        Useful for unit tests that need specific configuration scenarios.
-
-        Args:
-            **overrides: Keyword arguments to override default values
-                Valid keys: parameter_weights, hybrid_param_weight, hybrid_semantic_weight,
-                           default_threshold, min_score_gap_for_high_confidence,
-                           enable_fast_fail, semantic_placeholder
-
-        Returns:
-            MatchingConfig with specified overrides applied
-
-        Raises:
-            ValueError: If hybrid weights don't sum to 1.0 after overrides
-
-        Examples:
-            >>> # Test with higher threshold
-            >>> config = MatchingConfig.for_testing(default_threshold=90.0)
-            >>> config.default_threshold
-            90.0
-
-            >>> # Test with disabled fast-fail
-            >>> config = MatchingConfig.for_testing(enable_fast_fail=False)
-            >>> config.enable_fast_fail
-            False
-
-            >>> # Test with custom parameter weights
-            >>> custom_weights = ParameterWeights(
-            ...     dn=0.5, pn=0.2, valve_type=0.1,
-            ...     material=0.1, drive_type=0.05,
-            ...     voltage=0.03, manufacturer=0.02
-            ... )
-            >>> config = MatchingConfig.for_testing(parameter_weights=custom_weights)
-            >>> config.parameter_weights.dn
-            0.5
-
-        Business Logic:
-            This factory is designed for test scenarios only. Production code
-            should use `default()` to ensure consistent configuration.
-
-        Architecture Note:
-            Using kwargs allows forward compatibility - tests won't break
-            if new config fields are added in future phases.
-        """
+        """Create config with selective overrides of defaults. Intended for tests only."""
         # Start with defaults
         defaults = {
             "parameter_weights": ParameterWeights.default(),
@@ -311,20 +208,7 @@ class MatchingConfig:
         return cls(**defaults)
 
     def to_dict(self) -> dict[str, Any]:
-        """
-        Convert to dictionary for serialization/logging.
-
-        Returns:
-            Dictionary representation of configuration
-
-        Examples:
-            >>> config = MatchingConfig.default()
-            >>> data = config.to_dict()
-            >>> data['hybrid_param_weight']
-            0.4
-            >>> 'parameter_weights' in data
-            True
-        """
+        """Convert to dictionary for serialization/logging."""
         return {
             "parameter_weights": self.parameter_weights.to_dict(),
             "hybrid_param_weight": self.hybrid_param_weight,

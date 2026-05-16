@@ -20,29 +20,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class IndexingResult:
-    """
-    Result of indexing a reference file into ChromaDB.
-
-    Tracks success, failures, and performance metrics for indexing operation.
-
-    Attributes:
-        file_id: UUID of the indexed file.
-        total_descriptions: Total number of descriptions in file.
-        indexed_count: Successfully indexed descriptions.
-        failed_count: Failed to index (e.g., empty text, embedding errors).
-        errors: List of error messages for failed items.
-        indexing_time_seconds: Total time taken for indexing.
-
-    Example:
-        >>> result = IndexingResult(
-        ...     file_id=UUID("..."),
-        ...     total_descriptions=100,
-        ...     indexed_count=98,
-        ...     failed_count=2
-        ... )
-        >>> result.success_rate
-        98.0
-    """
+    """Result of indexing a reference file into ChromaDB: counts, errors, timing."""
 
     file_id: UUID
     total_descriptions: int
@@ -53,17 +31,7 @@ class IndexingResult:
 
     @property
     def success_rate(self) -> float:
-        """
-        Calculate success rate as percentage.
-
-        Returns:
-            Success rate (0-100%). Returns 0.0 if no descriptions.
-
-        Example:
-            >>> result = IndexingResult(..., total=100, indexed=95, failed=5)
-            >>> result.success_rate
-            95.0
-        """
+        """Success rate as percentage (0-100%). Returns 0.0 if no descriptions."""
         if self.total_descriptions == 0:
             return 0.0
         return (self.indexed_count / self.total_descriptions) * 100
@@ -71,35 +39,10 @@ class IndexingResult:
 
 class ReferenceIndexer:
     """
-    Service for indexing reference HVAC descriptions into vector database.
-
     Pre-embeds reference descriptions and stores them with metadata in ChromaDB.
-    Enables fast semantic similarity search during working file matching.
 
-    Key features:
-    - Batch embedding (32 descriptions at once) for efficiency
-    - Idempotent: can re-index existing files
-    - Partial failure handling: indexes what it can, reports errors
-    - Metadata storage: DN, PN, material, valve_type, source row
-
-    Metadata per document:
-    - file_id: Source file UUID
-    - dn: Diameter nominal (if extracted)
-    - pn: Pressure nominal (if extracted)
-    - material: Material type (if extracted)
-    - valve_type: Valve type (if extracted)
-    - source_row_number: Excel row number
-
-    ChromaDB document ID format: "{file_id}_{row_number}"
-
-    Example:
-        >>> indexer = ReferenceIndexer(embedding_service, chroma_client)
-        >>> descriptions = [...]  # List of HVACDescription entities
-        >>> result = indexer.index_file(file_id, descriptions)
-        >>> result.success_rate
-        98.5
-        >>> indexer.is_file_indexed(file_id)
-        True
+    Batch size: 32. Idempotent (skip_if_indexed=True by default). Partial failure handling.
+    Document ID: "{file_id}_{row_number}". Metadata stored: file_id, source_row_number, dn, pn, material, valve_type.
     """
 
     # Batch size for embedding generation (memory efficiency)
@@ -110,18 +53,6 @@ class ReferenceIndexer:
         embedding_service: EmbeddingService,
         chroma_client: ChromaClient,
     ) -> None:
-        """
-        Initialize reference indexer.
-
-        Args:
-            embedding_service: Service for generating embeddings.
-            chroma_client: ChromaDB client for vector storage.
-
-        Example:
-            >>> embedding_svc = EmbeddingService()
-            >>> chroma = ChromaClient()
-            >>> indexer = ReferenceIndexer(embedding_svc, chroma)
-        """
         self.embedding_service = embedding_service
         self.chroma_client = chroma_client
         logger.info("ReferenceIndexer initialized")
@@ -133,27 +64,10 @@ class ReferenceIndexer:
         skip_if_indexed: bool = True,
     ) -> IndexingResult:
         """
-        Index reference file descriptions into ChromaDB.
+        Embed descriptions and store in ChromaDB with metadata.
 
-        Generates embeddings and stores descriptions with metadata.
-        Processes in batches for memory efficiency.
-
-        Args:
-            file_id: UUID of the source file.
-            descriptions: List of HVAC descriptions to index.
-            skip_if_indexed: If True and file already indexed, skip.
-                If False, re-index (replaces existing).
-
-        Returns:
-            IndexingResult with counts, errors, and timing.
-
-        Example:
-            >>> result = indexer.index_file(
-            ...     file_id=UUID("..."),
-            ...     descriptions=[desc1, desc2, desc3]
-            ... )
-            >>> print(f"Indexed {result.indexed_count}/{result.total_descriptions}")
-            Indexed 3/3
+        skip_if_indexed=False forces re-index (removes old data first).
+        Returns IndexingResult with counts, errors, and timing.
         """
         start_time = time.time()
 
@@ -274,21 +188,7 @@ class ReferenceIndexer:
         return result
 
     def remove_file(self, file_id: UUID) -> int:
-        """
-        Remove all descriptions for a file from ChromaDB.
-
-        Deletes all documents matching the file_id metadata.
-
-        Args:
-            file_id: UUID of the file to remove.
-
-        Returns:
-            Number of documents removed.
-
-        Example:
-            >>> count = indexer.remove_file(UUID("..."))
-            >>> print(f"Removed {count} descriptions")
-        """
+        """Remove all ChromaDB documents for this file. Returns count removed."""
         collection = self.chroma_client.get_or_create_collection()
 
         # Query all documents for this file
@@ -310,21 +210,7 @@ class ReferenceIndexer:
             return 0
 
     def is_file_indexed(self, file_id: UUID) -> bool:
-        """
-        Check if file has been indexed.
-
-        Queries ChromaDB for any documents with matching file_id.
-
-        Args:
-            file_id: UUID of the file to check.
-
-        Returns:
-            True if file has indexed documents, False otherwise.
-
-        Example:
-            >>> if indexer.is_file_indexed(file_id):
-            ...     print("Already indexed")
-        """
+        """Return True if file has any indexed documents in ChromaDB."""
         collection = self.chroma_client.get_or_create_collection()
 
         try:
@@ -335,20 +221,7 @@ class ReferenceIndexer:
             return False
 
     def get_indexed_count(self, file_id: UUID | None = None) -> int:
-        """
-        Get count of indexed descriptions.
-
-        Args:
-            file_id: If provided, count for specific file.
-                If None, count all descriptions.
-
-        Returns:
-            Number of indexed descriptions.
-
-        Example:
-            >>> total = indexer.get_indexed_count()
-            >>> file_count = indexer.get_indexed_count(file_id)
-        """
+        """Return indexed count for specific file, or total count if file_id is None."""
         collection = self.chroma_client.get_or_create_collection()
 
         try:

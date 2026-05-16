@@ -1,32 +1,7 @@
 """
-Redis Progress Tracker (Phase 2 - Detailed Contract)
+Redis progress tracker for Celery jobs.
 
-Tracks Celery job progress in Redis for real-time status updates.
-Used by Application Layer to update and query job status.
-
-Responsibility:
-    - Store job progress in Redis with extended metadata
-    - Maintain progress history (last 10 updates)
-    - Heartbeat tracking to show task is alive
-    - Error recovery with file fallback
-    - Compression for large results
-    - TTL management with different timeouts for progress vs results
-    - Atomic operations for data consistency
-
-Architecture Notes:
-    - Infrastructure Layer (external dependency on Redis)
-    - Used by Celery tasks and Application Layer
-    - Phase 2: Extended progress data, history, heartbeat, fallback
-    - Phase 3: Will implement actual Redis operations
-
-Phase 2 Extensions:
-    - Extended progress data (eta, memory, errors)
-    - History tracking (last 10 updates)
-    - Heartbeat mechanism
-    - Error recovery with file fallback
-    - Compression for large results (>1MB)
-    - Cleanup method for old jobs
-    - MULTI/EXEC for atomic operations
+Stores job status, history, and results in Redis. Falls back to file storage on Redis failure.
 """
 
 import gzip
@@ -46,88 +21,17 @@ logger = logging.getLogger(__name__)
 
 class RedisProgressTracker:
     """
-    Track Celery job progress using Redis with extended features (Phase 2 Contract).
+    Track Celery job progress in Redis with history, heartbeat, and file fallback.
 
-    This class provides interface for storing and retrieving job progress information
-    with extended metadata, history tracking, and error recovery.
+    Redis keys (job_id is always str):
+        "progress:{job_id}"         → JSON progress dict (TTL: 1h)
+        "result:{job_id}"           → JSON result dict (TTL: 24h; gzip-compressed if >1MB)
+        "progress:{job_id}:history" → Redis LIST, last 10 updates (FIFO)
 
-    Note on job_id parameter type:
-        All methods use job_id as string (not UUID) for Redis compatibility.
-        Redis keys must be strings, so we use str(job_id) throughout.
-        Application Layer passes UUID, which is converted to string here.
+    Progress dict fields: status, progress (0-100), message, current_item, total_items,
+        stage, eta_seconds, memory_mb, errors, last_heartbeat.
 
-    Storage Format (Phase 2 - Extended):
-        Redis keys:
-        - "progress:{job_id}" -> JSON dict with progress data
-        - "result:{job_id}" -> JSON dict with final result (optionally gzipped)
-        - "progress:{job_id}:history" -> Redis LIST with last 10 progress updates
-
-        Progress data structure:
-        {
-            "status": "processing",       # queued/processing/completed/failed
-            "progress": 45,                # 0-100 percentage
-            "message": "Matching...",      # Human-readable current step
-            "current_item": 450,           # Current record being processed
-            "total_items": 1000,           # Total records to process
-            "stage": "MATCHING",           # Current stage (START, FILES_LOADED, MATCHING, etc.)
-            "eta_seconds": 120,            # Estimated time to completion
-            "memory_mb": 512.5,            # Memory usage in MB
-            "errors": [],                  # List of error messages
-            "last_heartbeat": "2025-01-11T10:30:45.123"  # ISO timestamp
-        }
-
-        History entry structure (in Redis LIST):
-        {
-            "timestamp": "2025-01-11T10:30:45.123",  # ISO timestamp
-            "progress": 45,                           # 0-100 percentage
-            "message": "Matching descriptions...",
-            "stage": "MATCHING"  # Current stage name
-        }
-
-    Business Rules:
-        - TTL progress: 1 hour (3600s) - auto-expire after 1h
-        - TTL result: 24 hours (86400s) - results kept longer
-        - History: Max 10 entries (FIFO, oldest dropped)
-        - Heartbeat: Update every 30s to show task is alive
-        - Compression: Gzip results >1MB before storing
-        - Atomic: MULTI/EXEC for operations modifying >1 key
-
-    Error Recovery:
-        - If Redis fails, fallback to file storage
-        - Fallback path: /tmp/fastbidder/fallback/progress_{job_id}.json
-        - Log warning but do NOT raise exception (graceful degradation)
-
-    Phase 2 Scope:
-        - Full contract with all Phase 2 extensions
-        - Detailed docstrings for Phase 3 implementation
-        - Error handling patterns
-        - Compression logic
-        - Cleanup mechanism
-
-    Examples:
-        >>> # In Celery task - start job
-        >>> tracker = RedisProgressTracker()
-        >>> tracker.start_job("job-123", "Starting matching process")
-
-        >>> # Update progress during execution
-        >>> tracker.update_progress(
-        ...     "job-123",
-        ...     progress=50,
-        ...     message="Matching descriptions",
-        ...     current_item=500,
-        ...     total_items=1000,
-        ...     stage="MATCHING"
-        ... )
-
-        >>> # Send heartbeat
-        >>> tracker.heartbeat("job-123")
-
-        >>> # Complete job
-        >>> tracker.complete_job("job-123", {"matches_count": 950, "result_file_id": "..."})
-
-        >>> # In Application Layer - get status
-        >>> status = tracker.get_status("job-123")
-        >>> print(status["progress"])  # 100
+    On Redis failure: writes to {FALLBACK_DIR}/progress_{job_id}.json (graceful degradation).
     """
 
     def __init__(
@@ -137,15 +41,8 @@ class RedisProgressTracker:
         redis_db: int = 0,
     ) -> None:
         """
-        Initialize Redis connection for progress tracking.
-
-        Args:
-            redis_host: Redis hostname (default from env: REDIS_HOST)
-            redis_port: Redis port (default from env: REDIS_PORT)
-            redis_db: Redis database number (default 0)
-
-        Raises:
-            RedisError: If connection cannot be established
+        Connect to Redis. TTLs: progress=1h, result=24h (env: REDIS_PROGRESS_TTL, REDIS_RESULT_TTL).
+        Fallback dir: FALLBACK_DIR env or {project}/data/fallback.
         """
         self.redis_host = redis_host or os.getenv("REDIS_HOST", "localhost")
         self.redis_port = redis_port or int(os.getenv("REDIS_PORT", "6379"))
@@ -185,80 +82,18 @@ class RedisProgressTracker:
         self.compression_threshold_bytes: int = 1024 * 1024  # 1MB
 
     def _get_progress_key(self, job_id: str) -> str:
-        """
-        Generate Redis key for job progress.
-
-        Args:
-            job_id: Unique job identifier (UUID string)
-
-        Returns:
-            Redis key in format "progress:{job_id}"
-
-        Examples:
-            >>> tracker._get_progress_key("abc-123")
-            'progress:abc-123'
-        """
         return f"progress:{job_id}"
 
     def _get_result_key(self, job_id: str) -> str:
-        """
-        Generate Redis key for job result.
-
-        Args:
-            job_id: Unique job identifier
-
-        Returns:
-            Redis key in format "result:{job_id}"
-
-        Examples:
-            >>> tracker._get_result_key("abc-123")
-            'result:abc-123'
-        """
         return f"result:{job_id}"
 
     def _get_history_key(self, job_id: str) -> str:
-        """
-        Generate Redis key for job history.
-
-        Args:
-            job_id: Unique job identifier
-
-        Returns:
-            Redis key in format "progress:{job_id}:history"
-
-        Examples:
-            >>> tracker._get_history_key("abc-123")
-            'progress:abc-123:history'
-        """
         return f"progress:{job_id}:history"
 
     def _get_fallback_path(self, job_id: str) -> Path:
-        """
-        Get fallback file path for job when Redis is unavailable.
-
-        Args:
-            job_id: Unique job identifier
-
-        Returns:
-            Path to fallback JSON file
-
-        Examples:
-            >>> tracker._get_fallback_path("abc-123")
-            Path('/tmp/fastbidder/fallback/progress_abc-123.json')
-        """
         return self.fallback_dir / f"progress_{job_id}.json"
 
     def _write_fallback(self, job_id: str, data: dict) -> None:
-        """
-        Write progress data to fallback file when Redis fails.
-
-        Args:
-            job_id: Unique job identifier
-            data: Progress data to write
-
-        Examples:
-            >>> tracker._write_fallback("job-123", {"status": "processing", "progress": 50})
-        """
         try:
             fallback_path = self._get_fallback_path(job_id)
             with fallback_path.open("w") as f:
@@ -270,29 +105,7 @@ class RedisProgressTracker:
     def start_job(
         self, job_id: str, message: str = "Job started", total_items: int = 0
     ) -> None:
-        """
-        Initialize job status in Redis (Phase 2 - Extended).
-
-        Sets initial status to "processing" with 0% progress and initializes
-        extended metadata fields.
-
-        Uses MULTI/EXEC for atomic initialization of:
-        - Progress data (progress:{job_id})
-        - History with initial entry (progress:{job_id}:history)
-
-        Args:
-            job_id: Unique job identifier
-            message: Initial status message (default: "Job started")
-            total_items: Total items to process (0 if unknown)
-
-        Error Handling:
-            - On RedisError: Write to fallback file and log warning
-            - Do NOT raise exception (graceful degradation)
-
-        Examples:
-            >>> tracker = RedisProgressTracker()
-            >>> tracker.start_job("job-123", "Starting matching process", total_items=1000)
-        """
+        """Initialize job as status=processing, progress=0%. Falls back to file on RedisError."""
         # Initialize progress_data before try block (for except block reference)
         progress_data = {}
         try:
@@ -352,42 +165,7 @@ class RedisProgressTracker:
         memory_mb: float = 0.0,
         errors: Optional[list[str]] = None,
     ) -> None:
-        """
-        Update job progress with extended metadata (Phase 2 - Full).
-
-        Updates progress data and adds entry to history.
-        Uses MULTI/EXEC for atomic updates.
-
-        Args:
-            job_id: Unique job identifier
-            progress: Progress percentage (0-100)
-            message: Current step description
-            current_item: Current record being processed
-            total_items: Total records to process
-            stage: Current stage name (START, MATCHING, etc.)
-            eta_seconds: Estimated time to completion
-            memory_mb: Memory usage in MB
-            errors: List of error messages (optional)
-
-        Raises:
-            ValueError: If progress not in range 0-100
-
-        Error Handling:
-            - On RedisError: Write to fallback file and log warning
-            - Do NOT raise exception (graceful degradation)
-
-        Examples:
-            >>> tracker.update_progress(
-            ...     "job-123",
-            ...     progress=50,
-            ...     message="Matching descriptions",
-            ...     current_item=500,
-            ...     total_items=1000,
-            ...     stage="MATCHING",
-            ...     eta_seconds=120,
-            ...     memory_mb=512.5
-            ... )
-        """
+        """Update progress and append to history. Raises ValueError if progress not 0-100."""
         # Validate progress
         if not 0 <= progress <= 100:
             raise ValueError(f"Progress must be 0-100, got {progress}")
@@ -445,26 +223,7 @@ class RedisProgressTracker:
             self._write_fallback(job_id, progress_data)
 
     def heartbeat(self, job_id: str) -> None:
-        """
-        Send heartbeat to show task is alive (Phase 2 - New).
-
-        Updates last_heartbeat timestamp and refreshes TTL without changing
-        other progress data. Used to show task is running even if progress
-        hasn't changed.
-
-        Should be called every ~30 seconds during long-running operations.
-
-        Args:
-            job_id: Unique job identifier
-
-        Error Handling:
-            - On RedisError: Log warning but do NOT raise
-            - Heartbeat failure is not critical
-
-        Examples:
-            >>> # In Celery task during long operation
-            >>> tracker.heartbeat("job-123")  # Call every 30s
-        """
+        """Refresh last_heartbeat timestamp without changing other fields. Call every ~30s during long ops."""
         try:
             # Get current progress
             current = self.get_status(job_id)
@@ -491,33 +250,7 @@ class RedisProgressTracker:
             # Heartbeat failure is not critical - just log and continue
 
     def complete_job(self, job_id: str, result: Optional[dict] = None) -> None:
-        """
-        Mark job as completed with optional result (Phase 2 - Extended).
-
-        Sets status to "completed", progress to 100%, and stores result.
-        Uses compression for large results (>1MB).
-        Uses MULTI/EXEC for atomic updates.
-
-        Args:
-            job_id: Unique job identifier
-            result: Optional result data (e.g., matched count, file path)
-                Will be compressed if size >1MB
-
-        Error Handling:
-            - On RedisError: Write to fallback file and log warning
-            - Do NOT raise exception (graceful degradation)
-
-        Examples:
-            >>> tracker.complete_job(
-            ...     "job-123",
-            ...     {
-            ...         "status": "completed",
-            ...         "matches_count": 950,
-            ...         "result_file_id": "result-uuid",
-            ...         "processing_time": 45.2
-            ...     }
-            ... )
-        """
+        """Set status=completed, progress=100%, store result (gzip-compressed if >1MB)."""
         # Pre-init so the except branch can reference it even if we crash early.
         progress_data: dict = {}
         try:
@@ -574,24 +307,7 @@ class RedisProgressTracker:
             )
 
     def fail_job(self, job_id: str, error_message: str) -> None:
-        """
-        Mark job as failed with error message.
-
-        Sets status to "failed" and adds error to errors list.
-
-        Args:
-            job_id: Unique job identifier
-            error_message: Error description for debugging
-
-        Error Handling:
-            - On RedisError: Write to fallback file and log warning
-
-        Examples:
-            >>> tracker.fail_job(
-            ...     "job-123",
-            ...     "File not found: working_file.xlsx"
-            ... )
-        """
+        """Set status=failed, append error_message to errors list."""
         # Initialize progress_data before try block (for except block reference)
         progress_data = {}
         try:
@@ -630,33 +346,10 @@ class RedisProgressTracker:
 
     def get_status(self, job_id: str) -> Optional[dict]:
         """
-        Retrieve current job status from Redis (Phase 4: includes AI matching info).
+        Return progress dict for job, or None if not found/expired.
 
-        Returns full progress data with extended metadata.
-        If job is completed, also includes result data (using_ai, ai_model).
-
-        Args:
-            job_id: Unique job identifier
-
-        Returns:
-            Progress dict if found, None if job not found or expired
-            Dict includes: status, progress, message, stage, eta_seconds, memory_mb,
-            errors, last_heartbeat, and (if completed): using_ai, ai_model
-
-        Error Handling:
-            - On RedisError: Try to read from fallback file
-            - If both fail: return None
-
-        Examples:
-            >>> status = tracker.get_status("job-123")
-            >>> if status:
-            ...     print(f"Progress: {status['progress']}%")
-            ...     print(f"Stage: {status['stage']}")
-            ...     print(f"ETA: {status['eta_seconds']}s")
-            ...     print(f"Memory: {status['memory_mb']}MB")
-            ...     # Phase 4: AI matching info
-            ...     print(f"Using AI: {status.get('using_ai', False)}")
-            ...     print(f"AI Model: {status.get('ai_model')}")
+        If status=completed, merges result data (using_ai, ai_model) into returned dict.
+        Falls back to file storage on RedisError.
         """
         try:
             # decode_responses=True + sync client → return type narrows to Optional[str].
@@ -708,22 +401,7 @@ class RedisProgressTracker:
             return None
 
     def get_history(self, job_id: str) -> list[dict]:
-        """
-        Retrieve progress history for job (Phase 2 - New).
-
-        Returns last 10 progress updates for debugging.
-
-        Args:
-            job_id: Unique job identifier
-
-        Returns:
-            List of history entries (newest first), empty list if none
-
-        Examples:
-            >>> history = tracker.get_history("job-123")
-            >>> for entry in history:
-            ...     print(f"{entry['timestamp']}: {entry['progress']}% - {entry['stage']} - {entry['message']}")
-        """
+        """Return last 10 progress history entries (newest first). Returns [] on error."""
         try:
             # Sync client + decode_responses=True returns list[str]; cast for type-checker.
             history_data = cast(
@@ -741,20 +419,7 @@ class RedisProgressTracker:
             return []
 
     def delete_status(self, job_id: str) -> None:
-        """
-        Delete job status, result, and history from Redis (manual cleanup).
-
-        Deletes all keys associated with job:
-        - progress:{job_id}
-        - result:{job_id}
-        - progress:{job_id}:history
-
-        Args:
-            job_id: Unique job identifier
-
-        Examples:
-            >>> tracker.delete_status("job-123")
-        """
+        """Delete all Redis keys for job (progress, result, history)."""
         try:
             # Delete all keys for this job
             pipe = self.redis.pipeline()
@@ -771,29 +436,7 @@ class RedisProgressTracker:
     def cleanup_old_jobs(
         self, progress_hours: int = 2, result_hours: int = 48
     ) -> int:
-        """
-        Cleanup old progress and result data (Phase 2 - New).
-
-        Scans Redis for expired jobs and removes them.
-        Should be called periodically (e.g., hourly cron job).
-
-        Note: This is in addition to TTL auto-expiration. Useful for:
-        - Different cleanup thresholds than TTL
-        - Manual cleanup trigger
-        - Cleanup of jobs that might have missed TTL
-
-        Args:
-            progress_hours: Delete progress data older than N hours (default 2h)
-            result_hours: Delete result data older than N hours (default 48h)
-
-        Returns:
-            Number of jobs cleaned up
-
-        Examples:
-            >>> # Cleanup progress >2h old, results >48h old
-            >>> count = tracker.cleanup_old_jobs(progress_hours=2, result_hours=48)
-            >>> print(f"Cleaned up {count} old jobs")
-        """
+        """Scan Redis for keys without TTL and set them. Returns count of affected keys."""
         try:
             cleaned_count = 0
 
