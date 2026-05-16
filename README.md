@@ -22,7 +22,7 @@ A typical request-for-quote runs 8 hours of clerical work before the engineer ca
 FastBidder turns that workflow into a single API call: upload the items to price, upload the
 previous quotes, get an Excel back with prices written in.
 
-**Original idea of FastBidder is created by [me] (https://www.linkedin.com/in/piotr-motyl-634491257/) — I previously worked as a mechanical construction manager and designer for 14 years and am currently gaining experience in artificial intelligence engineering. The project's approach, automating the bid preparation process, is derived from the relative tasks performed during bid preparation in most construction companies.**
+**Original idea of FastBidder is created by [me] (https://www.linkedin.com/in/piotr-motyl-634491257/) — I previously worked as a mechanical construction manager and designer for 11 years and am currently gaining experience in artificial intelligence engineering. The project's approach, automating the bid preparation process, is derived from the relative tasks performed during bid preparation in most construction companies.**
 
 The codebase is a portfolio piece for senior engineering practices (Clean Architecture, CQRS,
 two-stage retrieval, evaluation framework), framed around a real domain problem rather than
